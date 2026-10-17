@@ -38,6 +38,11 @@ type CentreForm = {
   directorEmail: string;
   password: string;
   confirmPassword: string;
+  pack: string;
+  subscriptionStatus: string;
+  startDate: string;
+  expirationDate: string;
+  rights: Record<string, boolean>;
 };
 
 type DirectorForm = {
@@ -46,6 +51,37 @@ type DirectorForm = {
   password: string;
 };
 
+const CENTRE_RIGHTS = [
+  ['etudiants', 'Étudiants'],
+  ['formateurs', 'Formateurs'],
+  ['cours', 'Cours / séances'],
+  ['planning', 'Planning'],
+  ['formations', 'Formations'],
+  ['groupes', 'Groupes'],
+  ['salles', 'Salles'],
+  ['presences', 'Présences'],
+  ['certificats', 'Certificats'],
+  ['supports', 'Supports'],
+  ['documents', 'Documents'],
+  ['statistiques', 'Statistiques'],
+  ['rapports', 'Rapports'],
+  ['import_excel', 'Import Excel'],
+  ['export_excel', 'Export Excel'],
+  ['seances', 'Gestion des séances'],
+] as const;
+
+type CentreConfigForm = {
+  pack: string;
+  subscriptionStatus: string;
+  startDate: string;
+  expirationDate: string;
+  rights: Record<string, boolean>;
+};
+
+const DEFAULT_CENTRE_RIGHTS = Object.fromEntries(
+  CENTRE_RIGHTS.map(([key]) => [key, true]),
+) as Record<string, boolean>;
+
 const emptyForm: CentreForm = {
   name: '',
   slug: '',
@@ -53,6 +89,11 @@ const emptyForm: CentreForm = {
   directorEmail: '',
   password: '',
   confirmPassword: '',
+  pack: '',
+  subscriptionStatus: '',
+  startDate: '',
+  expirationDate: '',
+  rights: DEFAULT_CENTRE_RIGHTS,
 };
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -116,8 +157,18 @@ export function CentreManagementPage() {
   const [form, setForm] = useState<CentreForm>(emptyForm);
   const [formOpen, setFormOpen] = useState(false);
   const [saving, setSaving] = useState(false);
-  const [message, setMessage] = useState<{ tone: 'success' | 'error'; text: string } | null>(null);
+  const [message, setMessage] = useState<{ tone: 'success' | 'error' | 'warning'; text: string } | null>(null);
   const [selectedCentre, setSelectedCentre] = useState<Centre | null>(null);
+  const [configCentre, setConfigCentre] = useState<Centre | null>(null);
+  const [configForm, setConfigForm] = useState<CentreConfigForm>({
+    pack: '',
+    subscriptionStatus: '',
+    startDate: '',
+    expirationDate: '',
+    rights: DEFAULT_CENTRE_RIGHTS,
+  });
+  const [configCapabilities, setConfigCapabilities] = useState({ subscription: false, rights: false });
+  const [configLoading, setConfigLoading] = useState(false);
   const [directors, setDirectors] = useState<CentreDirector[]>([]);
   const [directorLoading, setDirectorLoading] = useState(false);
   const [directorForm, setDirectorForm] = useState<DirectorForm>({
@@ -180,19 +231,45 @@ export function CentreManagementPage() {
       setMessage({ tone: 'error', text: 'Les deux mots de passe ne correspondent pas.' });
       return;
     }
+    if (form.startDate && form.expirationDate && form.expirationDate < form.startDate) {
+      setMessage({ tone: 'error', text: "La date d'expiration doit suivre la date de début." });
+      return;
+    }
 
     setSaving(true);
     try {
-      await invokeCentreDirectorAccess(getSupabaseClient(), {
+      const client = getSupabaseClient();
+      const [subscriptionProbe, rightsProbe] = await Promise.all([
+        client.from('centres').select('type_abonnement, statut_abonnement, date_debut, date_expiration').limit(1),
+        client.from('centres').select('droits').limit(1),
+      ]);
+      const centrePayload = {
+        nom: form.name.trim(),
+        slug,
+        actif: true,
+        ...(!subscriptionProbe.error ? {
+          type_abonnement: form.pack || null,
+          statut_abonnement: form.subscriptionStatus || null,
+          date_debut: form.startDate || null,
+          date_expiration: form.expirationDate || null,
+        } : {}),
+        ...(!rightsProbe.error ? { droits: form.rights } : {}),
+      };
+      await invokeCentreDirectorAccess(client, {
         action: 'create_centre',
-        centre: { nom: form.name.trim(), slug, actif: true },
+        centre: centrePayload,
         director: {
           full_name: form.directorName.trim(),
           email,
           password: form.password,
         },
       });
-      setMessage({ tone: 'success', text: 'Centre et directeur créés avec succès.' });
+      setMessage({
+        tone: subscriptionProbe.error || rightsProbe.error ? 'warning' : 'success',
+        text: subscriptionProbe.error || rightsProbe.error
+          ? `Centre et directeur créés. Attention : ${subscriptionProbe.error ? "les champs d'abonnement" : ''}${subscriptionProbe.error && rightsProbe.error ? ' et ' : ''}${rightsProbe.error ? 'les droits' : ''} n'ont pas pu être enregistrés, car les colonnes correspondantes sont absentes ou inaccessibles.`
+          : 'Centre, directeur, abonnement et droits créés avec succès.',
+      });
       setForm(emptyForm);
       setFormOpen(false);
       await refresh();
@@ -228,6 +305,96 @@ export function CentreManagementPage() {
         tone: 'error',
         text: cause instanceof Error ? cause.message : 'La modification du statut a échoué.',
       });
+    }
+  }
+
+  async function openCentreConfig(centre: Centre) {
+    setConfigCentre(centre);
+    setConfigLoading(true);
+    setMessage(null);
+    const client = getSupabaseClient();
+    const [subscriptionResult, rightsResult] = await Promise.all([
+      client
+        .from('centres')
+        .select('type_abonnement, statut_abonnement, date_debut, date_expiration')
+        .eq('id', centre.id)
+        .maybeSingle(),
+      client.from('centres').select('droits').eq('id', centre.id).maybeSingle(),
+    ]);
+
+    const rightsValue = rightsResult.data?.droits;
+    const storedRights =
+      rightsValue && typeof rightsValue === 'object' && !Array.isArray(rightsValue)
+        ? (rightsValue as Record<string, unknown>)
+        : {};
+    setConfigCapabilities({
+      subscription: !subscriptionResult.error,
+      rights: !rightsResult.error,
+    });
+    setConfigForm({
+      pack: typeof subscriptionResult.data?.type_abonnement === 'string'
+        ? subscriptionResult.data.type_abonnement
+        : '',
+      subscriptionStatus: typeof subscriptionResult.data?.statut_abonnement === 'string'
+        ? subscriptionResult.data.statut_abonnement
+        : '',
+      startDate: typeof subscriptionResult.data?.date_debut === 'string'
+        ? subscriptionResult.data.date_debut
+        : '',
+      expirationDate: typeof subscriptionResult.data?.date_expiration === 'string'
+        ? subscriptionResult.data.date_expiration
+        : '',
+      rights: Object.fromEntries(
+        CENTRE_RIGHTS.map(([key]) => [key, storedRights[key] !== false]),
+      ),
+    });
+    setConfigLoading(false);
+  }
+
+  async function saveCentreConfig(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!configCentre) return;
+    if (configForm.startDate && configForm.expirationDate && configForm.expirationDate < configForm.startDate) {
+      setMessage({ tone: 'error', text: "La date d'expiration doit suivre la date de début." });
+      return;
+    }
+
+    const payload: Record<string, string | null | Record<string, boolean>> = {};
+    if (configCapabilities.subscription) {
+      payload.type_abonnement = configForm.pack || null;
+      payload.statut_abonnement = configForm.subscriptionStatus || null;
+      payload.date_debut = configForm.startDate || null;
+      payload.date_expiration = configForm.expirationDate || null;
+    }
+    if (configCapabilities.rights) payload.droits = configForm.rights;
+    if (Object.keys(payload).length === 0) {
+      setMessage({
+        tone: 'error',
+        text: "Les colonnes d'abonnement et de droits ne sont pas disponibles dans Supabase. Vérifiez le schéma avant de continuer.",
+      });
+      return;
+    }
+
+    setSaving(true);
+    setMessage(null);
+    try {
+      const { data, error } = await getSupabaseClient()
+        .from('centres')
+        .update(payload)
+        .eq('id', configCentre.id)
+        .select('id');
+      if (error) throw error;
+      if (!data?.length) throw new Error("Aucune modification n'a été enregistrée.");
+      setMessage({ tone: 'success', text: `Abonnement et droits de « ${configCentre.name} » enregistrés.` });
+      setConfigCentre(null);
+      await refresh();
+    } catch (cause) {
+      setMessage({
+        tone: 'error',
+        text: cause instanceof Error ? cause.message : "Impossible d'enregistrer la configuration du centre.",
+      });
+    } finally {
+      setSaving(false);
     }
   }
 
@@ -367,6 +534,55 @@ export function CentreManagementPage() {
               required
               value={form.slug}
             />
+            <div className="grid gap-4 rounded-xl border border-line p-4 md:col-span-2 md:grid-cols-2">
+              <label className="sp-form-field">
+                Pack choisi
+                <select className="sp-field" onChange={(event) => setForm((current) => ({ ...current, pack: event.target.value }))} value={form.pack}>
+                  <option value="">Choisir un pack…</option>
+                  <option value="STARTER">STARTER</option>
+                  <option value="STANDARD">STANDARD</option>
+                  <option value="PROFESSIONAL">PROFESSIONAL</option>
+                  <option value="ENTERPRISE">ENTERPRISE — Grand École</option>
+                </select>
+              </label>
+              <label className="sp-form-field">
+                Statut de l'abonnement
+                <select className="sp-field" onChange={(event) => setForm((current) => ({ ...current, subscriptionStatus: event.target.value }))} value={form.subscriptionStatus}>
+                  <option value="">Choisir un statut…</option>
+                  <option value="TRIAL">TRIAL</option>
+                  <option value="ACTIF">ACTIF</option>
+                  <option value="EXPIRE">EXPIRE</option>
+                  <option value="SUSPENDU">SUSPENDU</option>
+                </select>
+              </label>
+              <label className="sp-form-field">
+                Date de début
+                <input className="sp-field" onChange={(event) => setForm((current) => ({ ...current, startDate: event.target.value }))} type="date" value={form.startDate} />
+              </label>
+              <label className="sp-form-field">
+                Date d'expiration
+                <input className="sp-field" onChange={(event) => setForm((current) => ({ ...current, expirationDate: event.target.value }))} type="date" value={form.expirationDate} />
+              </label>
+              <div className="md:col-span-2">
+                <h3 className="mb-3 text-sm font-bold text-brand-900">Droits d'accès inclus</h3>
+                <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
+                  {CENTRE_RIGHTS.map(([key, label]) => (
+                    <label className="flex items-center gap-2 rounded-lg border border-line p-2 text-sm" key={key}>
+                      <input
+                        checked={form.rights[key] === true}
+                        className="h-4 w-4"
+                        onChange={(event) => setForm((current) => ({
+                          ...current,
+                          rights: { ...current.rights, [key]: event.target.checked },
+                        }))}
+                        type="checkbox"
+                      />
+                      <span>{label}</span>
+                    </label>
+                  ))}
+                </div>
+              </div>
+            </div>
             <Field
               className="md:col-span-2"
               label="Nom complet du directeur"
@@ -486,6 +702,14 @@ export function CentreManagementPage() {
                           <div className="flex flex-wrap gap-2">
                             <Button
                               className="min-h-9 px-3"
+                              onClick={() => void openCentreConfig(centre)}
+                              type="button"
+                              variant="secondary"
+                            >
+                              Abonnement & droits
+                            </Button>
+                            <Button
+                              className="min-h-9 px-3"
                               onClick={() => void showDirectors(centre)}
                               type="button"
                               variant="secondary"
@@ -510,6 +734,113 @@ export function CentreManagementPage() {
             </Panel>
           )}
         </>
+      )}
+
+      {configCentre && (
+        <Panel>
+          <div className="mb-4 flex flex-wrap items-start justify-between gap-3">
+            <div>
+              <p className="m-0 text-xs font-bold tracking-[.12em] text-accent-600 uppercase">Configuration du centre</p>
+              <h2 className="m-0 mt-1 text-lg font-bold text-brand-900">{configCentre.name}</h2>
+            </div>
+            <Button onClick={() => setConfigCentre(null)} type="button" variant="secondary">Fermer</Button>
+          </div>
+          {configLoading ? (
+            <LoadingState label="Chargement de l'abonnement et des droits…" />
+          ) : (
+            <form className="space-y-5" onSubmit={(event) => void saveCentreConfig(event)}>
+              {!configCapabilities.subscription && (
+                <Alert tone="warning">
+                  Les colonnes d'abonnement ne sont pas disponibles ou lisibles. Le pack, le statut et les dates ne pourront pas être enregistrés tant que le schéma Supabase n'est pas vérifié.
+                </Alert>
+              )}
+              {!configCapabilities.rights && (
+                <Alert tone="warning">
+                  Le champ centres.droits n'est pas disponible ou lisible. Les droits ne pourront pas être enregistrés tant que le schéma/RLS n'est pas vérifié.
+                </Alert>
+              )}
+              <div className="grid gap-4 md:grid-cols-2">
+                <label className="sp-form-field">
+                  Pack choisi
+                  <select
+                    className="sp-field"
+                    disabled={!configCapabilities.subscription}
+                    onChange={(event) => setConfigForm((current) => ({ ...current, pack: event.target.value }))}
+                    value={configForm.pack}
+                  >
+                    <option value="">Choisir un pack…</option>
+                    <option value="STARTER">STARTER</option>
+                    <option value="STANDARD">STANDARD</option>
+                    <option value="PROFESSIONAL">PROFESSIONAL</option>
+                    <option value="ENTERPRISE">ENTERPRISE — Grand École</option>
+                  </select>
+                </label>
+                <label className="sp-form-field">
+                  Statut de l'abonnement
+                  <select
+                    className="sp-field"
+                    disabled={!configCapabilities.subscription}
+                    onChange={(event) => setConfigForm((current) => ({ ...current, subscriptionStatus: event.target.value }))}
+                    value={configForm.subscriptionStatus}
+                  >
+                    <option value="">Choisir un statut…</option>
+                    <option value="TRIAL">TRIAL</option>
+                    <option value="ACTIF">ACTIF</option>
+                    <option value="EXPIRE">EXPIRE</option>
+                    <option value="SUSPENDU">SUSPENDU</option>
+                  </select>
+                </label>
+                <label className="sp-form-field">
+                  Date de début
+                  <input
+                    className="sp-field"
+                    disabled={!configCapabilities.subscription}
+                    onChange={(event) => setConfigForm((current) => ({ ...current, startDate: event.target.value }))}
+                    type="date"
+                    value={configForm.startDate}
+                  />
+                </label>
+                <label className="sp-form-field">
+                  Date d'expiration
+                  <input
+                    className="sp-field"
+                    disabled={!configCapabilities.subscription}
+                    onChange={(event) => setConfigForm((current) => ({ ...current, expirationDate: event.target.value }))}
+                    type="date"
+                    value={configForm.expirationDate}
+                  />
+                </label>
+              </div>
+              <div>
+                <h3 className="mb-3 text-base font-bold text-brand-900">Droits d'accès du centre</h3>
+                <p className="mb-3 text-sm text-slate-500">Coche uniquement les modules inclus dans le pack. Les restrictions doivent aussi être appliquées par les fonctions/RLS Supabase.</p>
+                <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
+                  {CENTRE_RIGHTS.map(([key, label]) => (
+                    <label className="flex items-center gap-2 rounded-lg border border-line p-3 text-sm" key={key}>
+                      <input
+                        checked={configForm.rights[key] === true}
+                        className="h-4 w-4"
+                        disabled={!configCapabilities.rights}
+                        onChange={(event) => setConfigForm((current) => ({
+                          ...current,
+                          rights: { ...current.rights, [key]: event.target.checked },
+                        }))}
+                        type="checkbox"
+                      />
+                      <span>{label}</span>
+                    </label>
+                  ))}
+                </div>
+              </div>
+              <div className="flex flex-wrap justify-end gap-2">
+                <Button onClick={() => setConfigCentre(null)} type="button" variant="secondary">Annuler</Button>
+                <Button disabled={saving || (!configCapabilities.subscription && !configCapabilities.rights)} type="submit">
+                  {saving ? 'Enregistrement…' : 'Enregistrer la configuration'}
+                </Button>
+              </div>
+            </form>
+          )}
+        </Panel>
       )}
 
       {selectedCentre && (

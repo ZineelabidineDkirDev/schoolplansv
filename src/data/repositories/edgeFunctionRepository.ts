@@ -86,10 +86,11 @@ type CentreDirectorRequest =
         nom: string;
         slug: string;
         actif?: boolean;
-        type_abonnement?: string;
-        statut_abonnement?: string;
-        date_debut?: string;
-        date_expiration?: string;
+        type_abonnement?: string | null;
+        statut_abonnement?: string | null;
+        date_debut?: string | null;
+        date_expiration?: string | null;
+        droits?: Record<string, boolean>;
       };
       director: { full_name: string; email: string; password: string };
     };

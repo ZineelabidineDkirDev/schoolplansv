@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type ReactNode } from 'react';
+import { useEffect, useMemo, useState, type FormEvent, type ReactNode } from 'react';
 import { Alert, Button, EmptyState, LoadingState, PageHeader, Panel } from '../../components/ui';
 import { getWeekOccurrences } from '../../business/planning/planningSchedule';
 import { getPlanningData } from '../../data/repositories/planningRepository';
@@ -19,6 +19,14 @@ import {
   getCentreStudents,
   saveAttendance,
 } from '../../data/repositories/managementRepository';
+import {
+  createCentreStudent,
+  deleteCentreStudent,
+  updateCentreStudent,
+  type StudentRecordInput,
+} from '../../data/repositories/studentManagementRepository';
+import { assignStudentToGroup, getStudentCourseEnrollmentIds, setStudentCourseEnrollment } from '../../data/repositories/studentAssignmentRepository';
+import { createCentreRoom, updateCentreRoom, deleteCentreRoom, createCentreTeacher, updateCentreTeacher, deleteCentreTeacher, type RoomInput, type TeacherInput } from '../../data/repositories/directoryCrudRepository';
 import { getSupabaseClient } from '../../data/supabase/client';
 import type { PlanningData, PlanningOccurrence } from '../../types/planning';
 import type { AttendanceSheet, AttendanceStatus, ManagedStudent } from '../../types/management';
@@ -146,175 +154,134 @@ function toMinutes(time: string): number {
 const ROOM_DAYS = ['Lundi', 'Mardi', 'Mercredi', 'Jeudi', 'Vendredi', 'Samedi'];
 
 export function RoomsPage() {
+  const { profile } = useAuth();
   const { state, reload } = usePlanningData();
+  const [editingId, setEditingId] = useState<string | number | null>(null);
+  const [formOpen, setFormOpen] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [message, setMessage] = useState<string | null>(null);
+  const [form, setForm] = useState<RoomInput>({ name: '', type: '', capacity: 30 });
+  const canManage = profile?.role === 'admin' || profile?.role === 'director';
+  function openForm(room?: PlanningData['filters']['rooms'][number]) {
+    setEditingId(room?.id ?? null);
+    setForm(room ? { name: room.name, type: room.type ?? '', capacity: room.capacity } : { name: '', type: '', capacity: 30 });
+    setError(null); setMessage(null); setFormOpen(true);
+  }
+  async function saveRoom(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!profile?.centreId || !canManage) return;
+    setSaving(true); setError(null); setMessage(null);
+    try {
+      if (editingId === null) await createCentreRoom(getSupabaseClient(), profile.centreId, form);
+      else await updateCentreRoom(getSupabaseClient(), profile.centreId, editingId, form);
+      setMessage(editingId === null ? 'Salle créée.' : 'Salle modifiée.');
+      setFormOpen(false); reload();
+    } catch (cause) { setError(errorMessage(cause)); }
+    finally { setSaving(false); }
+  }
+  async function removeRoom(room: PlanningData['filters']['rooms'][number]) {
+    if (!profile?.centreId || !canManage || !window.confirm(`Supprimer la salle « ${room.name} » ?`)) return;
+    setError(null); setMessage(null);
+    try { await deleteCentreRoom(getSupabaseClient(), profile.centreId, room.id); setMessage('Salle supprimée.'); reload(); }
+    catch (cause) { setError(errorMessage(cause)); }
+  }
   return (
-    <PageFrame
-      description="Salles du centre et volume d’occupation hebdomadaire selon les séances planifiées."
-      title="Salles"
-    >
+    <PageFrame actions={canManage ? <Button onClick={() => openForm()} type="button">+ Ajouter une salle</Button> : undefined}
+      description="Salles du centre et volume d’occupation hebdomadaire selon les séances planifiées." title="Salles">
+      {error && <Alert tone="error"><p>{error}</p></Alert>}{message && <Alert tone="success"><p>{message}</p></Alert>}
+      {formOpen && canManage && <Panel className="management-editor">
+        <h2>{editingId === null ? 'Nouvelle salle' : 'Modifier la salle'}</h2>
+        <form className="sp-form-grid" onSubmit={(event) => void saveRoom(event)}>
+          <label className="sp-form-field">Nom<input className="sp-field" required value={form.name} onChange={(event) => setForm((v) => ({ ...v, name: event.target.value }))} /></label>
+          <label className="sp-form-field">Type<input className="sp-field" value={form.type} onChange={(event) => setForm((v) => ({ ...v, type: event.target.value }))} /></label>
+          <label className="sp-form-field">Capacité<input className="sp-field" min="1" type="number" value={form.capacity ?? ''} onChange={(event) => setForm((v) => ({ ...v, capacity: event.target.value ? Number(event.target.value) : null }))} /></label>
+          <div className="management-toolbar"><Button disabled={saving} type="submit">{saving ? 'Enregistrement…' : 'Enregistrer'}</Button><Button onClick={() => setFormOpen(false)} type="button" variant="secondary">Annuler</Button></div>
+        </form>
+      </Panel>}
       <PlanningLoadState retry={reload} state={state} />
-      {state.status === 'loaded' &&
-        (state.data.filters.rooms.length === 0 ? (
-          <EmptyState title="Aucune salle n’est enregistrée dans ce centre." />
-        ) : (
-          <div className="management-card-grid">
-            {state.data.filters.rooms.map((room) => {
-              const courses = state.data.courses.filter(
-                (course) => String(course.roomId) === String(room.id),
-              );
-              const occupiedHours = courses.reduce(
-                (total, course) => total + courseDuration(course),
-                0,
-              );
-              const weeklyHours = 66;
-              const freeHours = Math.max(weeklyHours - occupiedHours, 0);
-              const now = new Date();
-              const today = (now.getDay() + 6) % 7;
-              const currentMinutes = now.getHours() * 60 + now.getMinutes();
-              const todayCourses = courses
-                .filter((course) => course.weekday === today)
-                .sort((left, right) => toMinutes(left.startsAt) - toMinutes(right.startsAt));
-              const currentCourse = todayCourses.find(
-                (course) =>
-                  toMinutes(course.startsAt) <= currentMinutes &&
-                  currentMinutes < toMinutes(course.endsAt),
-              );
-              const nextCourse = todayCourses.find(
-                (course) => toMinutes(course.startsAt) > currentMinutes,
-              );
-              const isOpen =
-                today < ROOM_DAYS.length && currentMinutes >= 8 * 60 && currentMinutes < 19 * 60;
-              const roomState = currentCourse
-                ? { tone: 'busy', label: `Occupée jusqu’à ${currentCourse.endsAt.slice(0, 5)}` }
-                : !isOpen
-                  ? { tone: 'closed', label: 'Fermée actuellement' }
-                  : nextCourse
-                    ? { tone: 'free', label: `Libre jusqu’à ${nextCourse.startsAt.slice(0, 5)}` }
-                    : { tone: 'free', label: 'Libre jusqu’à la fermeture' };
-              return (
-                <Panel className="management-room-card" key={room.id}>
-                  <header className="management-room-heading">
-                    <h2>{room.name}</h2>
-                    <span className={`management-room-status is-${roomState.tone}`}>
-                      {roomState.label}
-                    </span>
-                  </header>
-                  <p className="management-room-description">
-                    {room.type || 'Salle de formation'} · {room.capacity ?? '—'} places
-                  </p>
-                  <div aria-label={`Disponibilité hebdomadaire de ${room.name}`}>
-                    {ROOM_DAYS.map((day, weekday) => (
-                      <div className="management-room-day" key={day}>
-                        <span>{day.slice(0, 3)}</span>
-                        {Array.from({ length: 11 }, (_, hour) => {
-                          const startsAt = 8 * 60 + hour * 60;
-                          const endsAt = startsAt + 60;
-                          const course = courses.find(
-                            (item) =>
-                              item.weekday === weekday &&
-                              toMinutes(item.startsAt) < endsAt &&
-                              toMinutes(item.endsAt) > startsAt,
-                          );
-                          return (
-                            <span
-                              aria-label={`${day}, ${hour + 8} h : ${course ? `${course.subjectName}, ${course.teacherName}` : 'libre'}`}
-                              className={`management-room-hour${course ? ' is-occupied' : ''}`}
-                              key={hour}
-                              role="img"
-                              title={
-                                course ? `${course.subjectName} · ${course.teacherName}` : 'Libre'
-                              }
-                            />
-                          );
-                        })}
-                      </div>
-                    ))}
-                  </div>
-                  <div className="management-room-totals">
-                    <span>
-                      Occupée {occupiedHours.toLocaleString('fr-FR', { maximumFractionDigits: 1 })}{' '}
-                      h / {weeklyHours} h
-                    </span>
-                    <span>
-                      Libre {freeHours.toLocaleString('fr-FR', { maximumFractionDigits: 1 })} h
-                    </span>
-                  </div>
-                </Panel>
-              );
-            })}
-          </div>
-        ))}
+      {state.status === 'loaded' && (state.data.filters.rooms.length === 0 ? <EmptyState title="Aucune salle n’est enregistrée dans ce centre." /> :
+        <div className="management-card-grid">{state.data.filters.rooms.map((room) => {
+          const courses = state.data.courses.filter((course) => String(course.roomId) === String(room.id));
+          const occupiedHours = courses.reduce((total, course) => total + courseDuration(course), 0);
+          const weeklyHours = 66; const freeHours = Math.max(weeklyHours - occupiedHours, 0);
+          const now = new Date(); const today = (now.getDay() + 6) % 7; const currentMinutes = now.getHours() * 60 + now.getMinutes();
+          const todayCourses = courses.filter((course) => course.weekday === today).sort((a, b) => toMinutes(a.startsAt) - toMinutes(b.startsAt));
+          const currentCourse = todayCourses.find((course) => toMinutes(course.startsAt) <= currentMinutes && currentMinutes < toMinutes(course.endsAt));
+          const nextCourse = todayCourses.find((course) => toMinutes(course.startsAt) > currentMinutes);
+          const isOpen = today < ROOM_DAYS.length && currentMinutes >= 8 * 60 && currentMinutes < 19 * 60;
+          const roomState = currentCourse ? { tone: 'busy', label: `Occupée jusqu’à ${currentCourse.endsAt.slice(0, 5)}` } : !isOpen ? { tone: 'closed', label: 'Fermée actuellement' } : nextCourse ? { tone: 'free', label: `Libre jusqu’à ${nextCourse.startsAt.slice(0, 5)}` } : { tone: 'free', label: 'Libre jusqu’à la fermeture' };
+          return <Panel className="management-room-card" key={room.id}>
+            <header className="management-room-heading"><h2>{room.name}</h2><span className={`management-room-status is-${roomState.tone}`}>{roomState.label}</span></header>
+            <p className="management-room-description">{room.type || 'Salle de formation'} · {room.capacity ?? '—'} places</p>
+            <div aria-label={`Disponibilité hebdomadaire de ${room.name}`}>{ROOM_DAYS.map((day, weekday) => <div className="management-room-day" key={day}><span>{day.slice(0, 3)}</span>{Array.from({ length: 11 }, (_, hour) => {
+              const startsAt = 8 * 60 + hour * 60; const endsAt = startsAt + 60;
+              const course = courses.find((item) => item.weekday === weekday && toMinutes(item.startsAt) < endsAt && toMinutes(item.endsAt) > startsAt);
+              return <span aria-label={`${day}, ${hour + 8} h : ${course ? `${course.subjectName}, ${course.teacherName}` : 'libre'}`} className={`management-room-hour${course ? ' is-occupied' : ''}`} key={hour} role="img" title={course ? `${course.subjectName} · ${course.teacherName}` : 'Libre'} />;
+            })}</div>)}</div>
+            <div className="management-room-totals"><span>Occupée {occupiedHours.toLocaleString('fr-FR', { maximumFractionDigits: 1 })} h / {weeklyHours} h</span><span>Libre {freeHours.toLocaleString('fr-FR', { maximumFractionDigits: 1 })} h</span></div>
+            {canManage && <div className="management-toolbar"><Button onClick={() => openForm(room)} type="button" variant="secondary">Modifier</Button><Button onClick={() => void removeRoom(room)} type="button" variant="danger">Supprimer</Button></div>}
+          </Panel>;
+        })}</div>)}
     </PageFrame>
   );
 }
 
 export function TeachersPage() {
+  const { profile } = useAuth();
   const { state, reload } = usePlanningData();
-  return (
-    <PageFrame
-      description="Équipe pédagogique, matières enseignées et séances attribuées dans le centre."
-      title="Formateurs"
-    >
-      <PlanningLoadState retry={reload} state={state} />
-      {state.status === 'loaded' &&
-        (state.data.filters.teachers.length === 0 ? (
-          <EmptyState title="Aucun formateur n’est enregistré dans ce centre." />
-        ) : (
-          <div className="management-card-grid management-four-column-grid">
-            {state.data.filters.teachers.map((teacher) => {
-              const courses = state.data.courses.filter(
-                (course) => String(course.teacherId) === String(teacher.id),
-              );
-              const subjects = state.data.subjectIdsByTeacher[String(teacher.id)] ?? [];
-              const hours = courses.reduce((total, course) => total + courseDuration(course), 0);
-              return (
-                <Panel className="management-card" key={teacher.id}>
-                  <div className="management-card-heading">
-                    <span aria-hidden="true" className="management-avatar">
-                      {initials(teacher.name)}
-                    </span>
-                    <div>
-                      <h2>{teacher.name}</h2>
-                      <p>{teacher.email ?? 'Adresse e-mail non renseignée'}</p>
-                    </div>
-                  </div>
-                  <div className="management-chip-list">
-                    {subjects.map((subjectId) => {
-                      const subject = state.data.filters.subjects.find(
-                        (item) => String(item.id) === String(subjectId),
-                      );
-                      return subject ? (
-                        <span className="management-chip" key={subjectId}>
-                          {subject.name}
-                        </span>
-                      ) : null;
-                    })}
-                    {subjects.length === 0 && (
-                      <span className="management-muted">Aucune matière associée</span>
-                    )}
-                  </div>
-                  <div className="management-metrics">
-                    <div>
-                      <span>Séances / semaine</span>
-                      <strong>{courses.length}</strong>
-                    </div>
-                    <div>
-                      <span>Heures planifiées</span>
-                      <strong>
-                        {hours.toLocaleString('fr-FR', { maximumFractionDigits: 1 })} h
-                      </strong>
-                    </div>
-                  </div>
-                  <p className="management-card-note">
-                    {teacher.profileId ? 'Compte de connexion associé' : 'Aucun compte associé'}
-                  </p>
-                </Panel>
-              );
-            })}
-          </div>
-        ))}
-    </PageFrame>
-  );
+  const [editingId, setEditingId] = useState<string | number | null>(null);
+  const [formOpen, setFormOpen] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [message, setMessage] = useState<string | null>(null);
+  const [form, setForm] = useState<TeacherInput>({ name: '', email: '' });
+  const canManage = profile?.role === 'admin' || profile?.role === 'director';
+  function openForm(teacher?: PlanningData['filters']['teachers'][number]) {
+    setEditingId(teacher?.id ?? null); setForm(teacher ? { name: teacher.name, email: teacher.email ?? '' } : { name: '', email: '' });
+    setError(null); setMessage(null); setFormOpen(true);
+  }
+  async function saveTeacher(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault(); if (!profile?.centreId || !canManage) return;
+    setSaving(true); setError(null); setMessage(null);
+    try {
+      if (editingId === null) await createCentreTeacher(getSupabaseClient(), profile.centreId, form);
+      else await updateCentreTeacher(getSupabaseClient(), profile.centreId, editingId, form);
+      setMessage(editingId === null ? 'Formateur créé.' : 'Formateur modifié.'); setFormOpen(false); reload();
+    } catch (cause) { setError(errorMessage(cause)); } finally { setSaving(false); }
+  }
+  async function removeTeacher(teacher: PlanningData['filters']['teachers'][number]) {
+    if (!profile?.centreId || !canManage || !window.confirm(`Supprimer la fiche de ${teacher.name} ?`)) return;
+    setError(null); setMessage(null);
+    try { await deleteCentreTeacher(getSupabaseClient(), profile.centreId, teacher.id); setMessage('Formateur supprimé.'); reload(); }
+    catch (cause) { setError(errorMessage(cause)); }
+  }
+  return <PageFrame actions={canManage ? <Button onClick={() => openForm()} type="button">+ Ajouter un formateur</Button> : undefined}
+    description="Équipe pédagogique, matières enseignées et séances attribuées dans le centre." title="Formateurs">
+    {error && <Alert tone="error"><p>{error}</p></Alert>}{message && <Alert tone="success"><p>{message}</p></Alert>}
+    {formOpen && canManage && <Panel className="management-editor"><h2>{editingId === null ? 'Nouveau formateur' : 'Modifier le formateur'}</h2>
+      <form className="sp-form-grid" onSubmit={(event) => void saveTeacher(event)}>
+        <label className="sp-form-field">Nom complet<input className="sp-field" required value={form.name} onChange={(event) => setForm((v) => ({ ...v, name: event.target.value }))} /></label>
+        <label className="sp-form-field">E-mail<input className="sp-field" type="email" value={form.email} onChange={(event) => setForm((v) => ({ ...v, email: event.target.value }))} /></label>
+        <p className="management-muted">Le compte de connexion et les matières associées ne sont pas modifiés par ce formulaire.</p>
+        <div className="management-toolbar"><Button disabled={saving} type="submit">{saving ? 'Enregistrement…' : 'Enregistrer'}</Button><Button onClick={() => setFormOpen(false)} type="button" variant="secondary">Annuler</Button></div>
+      </form></Panel>}
+    <PlanningLoadState retry={reload} state={state} />
+    {state.status === 'loaded' && (state.data.filters.teachers.length === 0 ? <EmptyState title="Aucun formateur n’est enregistré dans ce centre." /> :
+      <div className="management-card-grid management-four-column-grid">{state.data.filters.teachers.map((teacher) => {
+        const courses = state.data.courses.filter((course) => String(course.teacherId) === String(teacher.id));
+        const subjects = state.data.subjectIdsByTeacher[String(teacher.id)] ?? [];
+        const hours = courses.reduce((total, course) => total + courseDuration(course), 0);
+        return <Panel className="management-card" key={teacher.id}>
+          <div className="management-card-heading"><span aria-hidden="true" className="management-avatar">{initials(teacher.name)}</span><div><h2>{teacher.name}</h2><p>{teacher.email ?? 'Adresse e-mail non renseignée'}</p></div></div>
+          <div className="management-chip-list">{subjects.map((subjectId) => { const subject = state.data.filters.subjects.find((item) => String(item.id) === String(subjectId)); return subject ? <span className="management-chip" key={subjectId}>{subject.name}</span> : null; })}
+            {subjects.length === 0 && <span className="management-muted">Aucune matière associée</span>}</div>
+          <div className="management-metrics"><div><span>Séances / semaine</span><strong>{courses.length}</strong></div><div><span>Heures planifiées</span><strong>{hours.toLocaleString('fr-FR', { maximumFractionDigits: 1 })} h</strong></div></div>
+          <p className="management-card-note">{teacher.profileId ? 'Compte de connexion associé' : 'Aucun compte associé'}</p>
+          {canManage && <div className="management-toolbar"><Button onClick={() => openForm(teacher)} type="button" variant="secondary">Modifier</Button><Button disabled={Boolean(teacher.profileId || courses.length)} onClick={() => void removeTeacher(teacher)} type="button" variant="danger">Supprimer</Button></div>}
+        </Panel>;
+      })}</div>)}
+  </PageFrame>;
 }
 
 export function FormationGroupsPage() {
@@ -435,7 +402,7 @@ export function FormationGroupsPage() {
     setFormOpen(true);
   }
 
-  async function submitFormation(event: React.FormEvent<HTMLFormElement>) {
+  async function submitFormation(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (!profile?.centreId || !canManage) return;
     setSaving(true);
@@ -486,7 +453,7 @@ export function FormationGroupsPage() {
     setGroupFormOpen(true);
   }
 
-  async function submitGroup(event: React.FormEvent<HTMLFormElement>) {
+  async function submitGroup(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (!profile?.centreId || !canManage) return;
     setSaving(true);
@@ -1074,9 +1041,21 @@ export function FormationGroupsPage() {
 
 export function StudentsPage() {
   const { profile } = useAuth();
+  const planning = usePlanningData();
   const [search, setSearch] = useState('');
   const [reloadKey, setReloadKey] = useState(0);
   const [state, setState] = useState<StudentState>({ status: 'loading' });
+  const [editingId, setEditingId] = useState<string | number | null>(null);
+  const [formOpen, setFormOpen] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [message, setMessage] = useState<string | null>(null);
+  const [enrollmentIds, setEnrollmentIds] = useState<Record<string, Array<string | number>>>({});
+  const [form, setForm] = useState<StudentRecordInput>({
+    firstName: '', lastName: '', email: '', telephone: '', city: '', address: '', educationLevel: '',
+  });
+  const canManage = profile?.role === 'admin' || profile?.role === 'director';
+
   useEffect(() => {
     let active = true;
     async function load() {
@@ -1084,122 +1063,252 @@ export function StudentsPage() {
       try {
         const students = await getCentreStudents(getSupabaseClient(), profile?.centreId ?? '');
         if (active) setState({ status: 'loaded', students });
-      } catch (error) {
-        if (active) setState({ status: 'error', message: errorMessage(error) });
+      } catch (cause) {
+        if (active) setState({ status: 'error', message: errorMessage(cause) });
       }
     }
     void load();
-    return () => {
-      active = false;
-    };
+    return () => { active = false; };
   }, [profile?.centreId, reloadKey]);
+
+  useEffect(() => {
+    let active = true;
+    if (!profile?.centreId) { setEnrollmentIds({}); return; }
+    void getStudentCourseEnrollmentIds(getSupabaseClient(), profile.centreId)
+      .then((ids) => { if (active) setEnrollmentIds(ids); })
+      .catch((cause: unknown) => { if (active) setError(errorMessage(cause)); });
+    return () => { active = false; };
+  }, [profile?.centreId, reloadKey]);
+
+  async function changeCourseEnrollment(student: ManagedStudent, courseId: string | number, enrolled: boolean) {
+    if (!profile?.centreId || !canManage) return;
+    setError(null); setMessage(null);
+    try {
+      await setStudentCourseEnrollment(getSupabaseClient(), profile.centreId, student.id, courseId, enrolled);
+      setEnrollmentIds((current) => {
+        const key = String(student.id);
+        const currentIds = current[key] ?? [];
+        return { ...current, [key]: enrolled
+          ? (currentIds.some((id) => String(id) === String(courseId)) ? currentIds : [...currentIds, courseId])
+          : currentIds.filter((id) => String(id) !== String(courseId)) };
+      });
+      setMessage(enrolled ? 'Étudiant inscrit au cours.' : 'Inscription au cours supprimée.');
+      setReloadKey((key) => key + 1);
+    } catch (cause) { setError(errorMessage(cause)); }
+  }
+
   const visibleStudents = useMemo(() => {
     if (state.status !== 'loaded') return [];
     const normalized = search.trim().toLocaleLowerCase('fr');
     return state.students.filter((student) =>
-      [
-        student.firstName,
-        student.lastName,
-        student.email,
-        student.telephone,
-        student.city,
-        student.groupName,
-      ]
-        .filter(Boolean)
-        .join(' ')
-        .toLocaleLowerCase('fr')
-        .includes(normalized),
+      [student.firstName, student.lastName, student.email, student.telephone, student.city, student.groupName]
+        .filter(Boolean).join(' ').toLocaleLowerCase('fr').includes(normalized),
     );
   }, [search, state]);
 
+  function startCreate() {
+    setEditingId(null);
+    setForm({ firstName: '', lastName: '', email: '', telephone: '', city: '', address: '', educationLevel: '' });
+    setError(null);
+    setMessage(null);
+    setFormOpen(true);
+  }
+
+  function startEdit(student: ManagedStudent) {
+    setEditingId(student.id);
+    setForm({
+      firstName: student.firstName,
+      lastName: student.lastName,
+      email: student.email ?? '',
+      telephone: student.telephone ?? '',
+      city: student.city ?? '',
+      address: student.address ?? '',
+      educationLevel: student.educationLevel ?? '',
+    });
+    setError(null);
+    setMessage(null);
+    setFormOpen(true);
+  }
+
+  async function submitStudent(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!profile?.centreId || !canManage) return;
+    setSaving(true);
+    setError(null);
+    setMessage(null);
+    try {
+      if (editingId === null) {
+        await createCentreStudent(getSupabaseClient(), profile.centreId, form);
+        setMessage('Étudiant créé avec succès.');
+      } else {
+        await updateCentreStudent(getSupabaseClient(), profile.centreId, editingId, form);
+        setMessage('Dossier étudiant modifié.');
+      }
+      setFormOpen(false);
+      setReloadKey((key) => key + 1);
+    } catch (cause) {
+      setError(errorMessage(cause));
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function changeStudentGroup(student: ManagedStudent, value: string) {
+    if (!profile?.centreId || !canManage) return;
+    try {
+      await assignStudentToGroup(getSupabaseClient(), profile.centreId, student.id, value ? value : null);
+      setMessage('Affectation au groupe enregistrée.');
+      setError(null);
+      setReloadKey((key) => key + 1);
+    } catch (cause) {
+      setError(errorMessage(cause));
+    }
+  }
+
+
+  async function removeStudent(student: ManagedStudent) {
+    if (!profile?.centreId || !canManage) return;
+    if (!window.confirm(`Supprimer le dossier de ${student.firstName} ${student.lastName} ?`)) return;
+    setError(null);
+    setMessage(null);
+    try {
+      await deleteCentreStudent(getSupabaseClient(), profile.centreId, student.id);
+      setMessage('Dossier étudiant supprimé.');
+      setReloadKey((key) => key + 1);
+    } catch (cause) {
+      setError(errorMessage(cause));
+    }
+  }
+
+  const fields: Array<{ key: keyof StudentRecordInput; label: string; required?: boolean; type?: string }> = [
+    { key: 'firstName', label: 'Prénom', required: true },
+    { key: 'lastName', label: 'Nom', required: true },
+    { key: 'email', label: 'E-mail', type: 'email' },
+    { key: 'telephone', label: 'Téléphone', type: 'tel' },
+    { key: 'city', label: 'Ville' },
+    { key: 'address', label: 'Adresse' },
+    { key: 'educationLevel', label: 'Niveau d’études' },
+  ];
+
   return (
     <PageFrame
+      actions={canManage ? <Button onClick={startCreate} type="button">+ Ajouter un étudiant</Button> : undefined}
       description="Dossiers étudiants du centre, groupe d’affectation et inscriptions aux cours."
       title="Étudiants"
     >
+      {error && <Alert tone="error"><p>{error}</p></Alert>}
+      {message && <Alert tone="success"><p>{message}</p></Alert>}
+      {formOpen && canManage && (
+        <Panel className="management-editor">
+          <header className="management-editor-heading">
+            <div>
+              <p className="planning-progress-eyebrow">Dossier étudiant</p>
+              <h2>{editingId === null ? 'Nouvel étudiant' : 'Modifier l’étudiant'}</h2>
+            </div>
+            <button aria-label="Fermer le formulaire" className="planning-dialog-close" onClick={() => setFormOpen(false)} type="button">×</button>
+          </header>
+          <form className="sp-form-grid" onSubmit={(event) => void submitStudent(event)}>
+            {fields.map((field) => (
+              <label className="sp-form-field" key={field.key}>
+                {field.label}
+                <input
+                  className="sp-field"
+                  autoComplete="off"
+                  required={field.required}
+                  type={field.type ?? 'text'}
+                  value={form[field.key]}
+                  onChange={(event) => setForm((current) => ({ ...current, [field.key]: event.target.value }))}
+                />
+              </label>
+            ))}
+            <div className="management-toolbar">
+              <Button disabled={saving} type="submit">{saving ? 'Enregistrement…' : 'Enregistrer'}</Button>
+              <Button onClick={() => setFormOpen(false)} type="button" variant="secondary">Annuler</Button>
+            </div>
+          </form>
+        </Panel>
+      )}
       <div className="management-toolbar">
         <label className="sp-form-field">
           Rechercher un étudiant
-          <input
-            className="sp-field"
-            onChange={(event) => setSearch(event.target.value)}
-            placeholder="Nom, e-mail, ville ou groupe"
-            type="search"
-            value={search}
-          />
+          <input className="sp-field" onChange={(event) => setSearch(event.target.value)} placeholder="Nom, e-mail, ville ou groupe" type="search" value={search} />
         </label>
-        {state.status === 'loaded' && (
-          <span className="management-result-count">
-            {visibleStudents.length} / {state.students.length} étudiants
-          </span>
-        )}
+        {state.status === 'loaded' && <span className="management-result-count">{visibleStudents.length} / {state.students.length} étudiants</span>}
       </div>
-      {state.status === 'loading' && (
-        <Panel>
-          <LoadingState label="Chargement des étudiants…" />
-        </Panel>
-      )}
+      {state.status === 'loading' && <Panel><LoadingState label="Chargement des étudiants…" /></Panel>}
       {state.status === 'error' && (
         <Alert tone="error">
           <p>La liste des étudiants n’a pas pu être chargée.</p>
           <p>{state.message}</p>
-          <Button onClick={() => setReloadKey((key) => key + 1)} type="button" variant="secondary">
-            Réessayer
-          </Button>
+          <Button onClick={() => setReloadKey((key) => key + 1)} type="button" variant="secondary">Réessayer</Button>
         </Alert>
       )}
-      {state.status === 'loaded' &&
-        (visibleStudents.length === 0 ? (
-          <EmptyState
-            title={
-              search
-                ? 'Aucun résultat pour cette recherche.'
-                : 'Aucun étudiant enregistré dans ce centre.'
-            }
-          />
-        ) : (
-          <div className="management-card-grid management-four-column-grid management-student-grid">
-            {visibleStudents.map((student) => (
-              <Panel className="management-student-card" key={student.id}>
-                <header className="management-student-heading">
-                  <span aria-hidden="true" className="management-avatar management-student-avatar">
-                    {initials(`${student.firstName} ${student.lastName}`)}
-                  </span>
-                  <div>
-                    <h2>
-                      {student.firstName} {student.lastName}
-                    </h2>
-                    <p>{student.educationLevel || 'Niveau non renseigné'}</p>
-                  </div>
-                </header>
-                <div className="management-student-details">
-                  {student.email && (
-                    <a href={`mailto:${student.email}`}>
-                      <span aria-hidden="true">✉</span>
-                      {student.email}
-                    </a>
-                  )}
-                  {student.telephone && (
-                    <a href={`tel:${student.telephone}`}>
-                      <span aria-hidden="true">☎</span>
-                      {student.telephone}
-                    </a>
-                  )}
-                  {student.city && (
-                    <span>
-                      <span aria-hidden="true">⌖</span>
-                      {student.city}
-                    </span>
-                  )}
+      {state.status === 'loaded' && (visibleStudents.length === 0 ? (
+        <EmptyState title={search ? 'Aucun résultat pour cette recherche.' : 'Aucun étudiant enregistré dans ce centre.'} />
+      ) : (
+        <div className="management-card-grid management-four-column-grid management-student-grid">
+          {visibleStudents.map((student) => (
+            <Panel className="management-student-card" key={student.id}>
+              <header className="management-student-heading">
+                <span aria-hidden="true" className="management-avatar management-student-avatar">{initials(`${student.firstName} ${student.lastName}`)}</span>
+                <div>
+                  <h2>{student.firstName} {student.lastName}</h2>
+                  <p>{student.educationLevel || 'Niveau non renseigné'}</p>
                 </div>
-                <footer className="management-student-footer">
-                  <span>{student.groupName || 'Non affecté'}</span>
-                  <span>{student.courseCount} cours</span>
-                </footer>
-              </Panel>
-            ))}
-          </div>
-        ))}
+              </header>
+              <div className="management-student-details">
+                {student.email && <a href={`mailto:${student.email}`}><span aria-hidden="true">✉</span>{student.email}</a>}
+                {student.telephone && <a href={`tel:${student.telephone}`}><span aria-hidden="true">☎</span>{student.telephone}</a>}
+                {student.city && <span><span aria-hidden="true">⌖</span>{student.city}</span>}
+              </div>
+              <footer className="management-student-footer">
+                <span>{student.groupName || 'Non affecté'}</span>
+                <span>{student.courseCount} cours</span>
+              </footer>
+              {canManage && planning.state.status === 'loaded' && (
+                <div className="sp-form-grid">
+                  <label className="sp-form-field">
+                    Groupe
+                    <select className="sp-field" value={student.groupId === null ? '' : String(student.groupId)} onChange={(event) => void changeStudentGroup(student, event.target.value)}>
+                      <option value="">Non affecté</option>
+                      {planning.state.data.filters.groups.filter((group) => group.active).map((group) => (
+                        <option key={group.id} value={String(group.id)}>{group.name} · {group.formationName ?? 'Formation'}</option>
+                      ))}
+                    </select>
+                  </label>
+                  <details>
+                    <summary>Gérer les inscriptions aux cours</summary>
+                    <div className="sp-form-grid">
+                      {planning.state.data.courses.map((course) => {
+                        const enrolled = (enrollmentIds[String(student.id)] ?? []).some((id) => String(id) === String(course.id));
+                        const groupMismatch = Boolean(course.groupId && String(student.groupId) !== String(course.groupId));
+                        return (
+                          <label className="cb" key={course.id}>
+                            <input
+                              type="checkbox"
+                              checked={enrolled}
+                              disabled={!enrolled && groupMismatch}
+                              onChange={(event) => void changeCourseEnrollment(student, course.id, event.target.checked)}
+                            />
+                            {course.subjectName} — {course.groupName ?? 'Sans groupe'}
+                          </label>
+                        );
+                      })}
+                    </div>
+                    <p className="management-muted">Les cours d’un autre groupe sont désactivés. Affectez d’abord l’étudiant au groupe correspondant.</p>
+                  </details>
+                </div>
+              )}
+              {canManage && (
+                <div className="management-toolbar">
+                  <Button onClick={() => startEdit(student)} type="button" variant="secondary">Modifier</Button>
+                  <Button onClick={() => void removeStudent(student)} type="button" variant="danger">Supprimer</Button>
+                </div>
+              )}
+            </Panel>
+          ))}
+        </div>
+      ))}
     </PageFrame>
   );
 }

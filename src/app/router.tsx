@@ -1,4 +1,4 @@
-import { createBrowserRouter } from 'react-router-dom';
+﻿import { createBrowserRouter } from 'react-router-dom';
 import { App } from './App';
 import { AuthenticatedRoutes, SectionPlaceholder } from '../modules/auth/AuthRoutes';
 import { DashboardPage } from '../modules/dashboard/DashboardPage';

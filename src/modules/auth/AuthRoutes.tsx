@@ -1,3 +1,4 @@
+import { useEffect, useState } from 'react';
 import { Link, NavLink, Navigate, Outlet, useParams } from 'react-router-dom';
 import {
   canAccessSection,
@@ -6,6 +7,7 @@ import {
   SECTION_LABELS,
 } from '../../business/permissions/permissions';
 import { useAuth } from './AuthProvider';
+import { getSupabaseClient } from '../../data/supabase/client';
 import { ForcedPasswordChange } from './ForcedPasswordChange';
 import { PendingAccess } from './PendingAccess';
 import { MyStudentsPage } from '../students/MyStudentsPage';
@@ -70,12 +72,113 @@ function ApplicationShell() {
     session,
     permissions,
     permissionErrors,
-    activeCentres,
-    activeCentreId,
-    setActiveCentreId,
     error: authError,
     signOut,
+    setActiveCentreId,
   } = useAuth();
+  type CentreHeaderInfo = {
+    id: string;
+    nom: string;
+    actif: boolean;
+    logo_url?: string | null;
+    type_abonnement?: string | null;
+    statut_abonnement?: string | null;
+    date_debut?: string | null;
+    date_expiration?: string | null;
+  };
+  const [centres, setCentres] = useState<CentreHeaderInfo[]>([]);
+  const [activeCentre, setActiveCentre] = useState<CentreHeaderInfo | null>(null);
+  const [centresLoading, setCentresLoading] = useState(false);
+  const [centresError, setCentresError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!profile || !['super_admin', 'admin', 'director'].includes(profile.role)) return;
+    const currentProfile = profile;
+    let active = true;
+
+    async function loadSubscription(centreId: string, base: CentreHeaderInfo) {
+      const { data } = await getSupabaseClient()
+        .from('centres')
+        .select('type_abonnement, statut_abonnement, date_debut, date_expiration')
+        .eq('id', centreId)
+        .maybeSingle();
+      if (!active) return base;
+      return data ? { ...base, ...data } : base;
+    }
+
+    async function loadCentres() {
+      setCentresLoading(true);
+      setCentresError(null);
+      const client = getSupabaseClient();
+
+      if (currentProfile.role === 'super_admin') {
+        const { data, error } = await client
+          .from('centres')
+          .select('id, nom, actif, logo_url')
+          .eq('actif', true)
+          .order('nom');
+
+        if (!active) return;
+        if (error) {
+          setCentresError(error.message);
+          setCentres([]);
+          setActiveCentre(null);
+          setCentresLoading(false);
+          return;
+        }
+
+        const available = (data ?? []).filter(
+          (centre) => typeof centre.id === 'string' && typeof centre.nom === 'string',
+        ) as CentreHeaderInfo[];
+        if (!available.some((centre) => centre.id === currentProfile.centreId)) {
+          const firstId = available[0]?.id ?? null;
+          setActiveCentreId(firstId);
+          if (!firstId) {
+            setCentres([]);
+            setActiveCentre(null);
+            setCentresLoading(false);
+            return;
+          }
+        }
+        const selectedId = available.some((centre) => centre.id === currentProfile.centreId)
+          ? currentProfile.centreId
+          : available[0]?.id ?? null;
+        const selected = available.find((centre) => centre.id === selectedId) ?? null;
+        setCentres(available);
+        setActiveCentre(selected ? await loadSubscription(selected.id, selected) : null);
+        setCentresLoading(false);
+        return;
+      }
+
+      if (!currentProfile.centreId) {
+        setActiveCentre(null);
+        setCentresLoading(false);
+        return;
+      }
+      const { data, error } = await client
+        .from('centres')
+        .select('id, nom, actif, logo_url')
+        .eq('id', currentProfile.centreId)
+        .maybeSingle();
+      if (!active) return;
+      if (error) {
+        setCentresError(error.message);
+        setActiveCentre(null);
+      } else if (data) {
+        const base = data as CentreHeaderInfo;
+        setActiveCentre(await loadSubscription(base.id, base));
+      } else {  
+        setActiveCentre(null);
+      }
+      setCentresLoading(false);
+    }
+
+    void loadCentres();
+    return () => {
+      active = false;
+    };
+  }, [profile, setActiveCentreId]);
+
   if (!profile) return null;
 
   const visibleSections = getVisibleSections(profile.role, permissions);
@@ -87,21 +190,65 @@ function ApplicationShell() {
           <b className="sp-app-brand-mark">I</b>
           <span>SchoolPlans</span>
         </Link>
-        {profile.role === 'super_admin' && (
-          <label className="flex min-w-48 flex-col gap-1 text-sm" htmlFor="sp-active-centre">
-            <span className="font-semibold">Centre actif</span>
+        {['super_admin', 'admin', 'director'].includes(profile.role) && (
+          <div className="flex min-w-0 flex-wrap items-center gap-3 rounded-xl border border-white/15 bg-white/10 px-3 py-2 text-white">
+            <div className="grid h-11 w-11 shrink-0 place-items-center overflow-hidden rounded-lg bg-white">
+              {activeCentre?.logo_url ? (
+                <img alt={`Logo de ${activeCentre.nom}`} className="h-full w-full object-contain" src={activeCentre.logo_url} />
+              ) : (
+                <span aria-hidden="true" className="text-xl">🏫</span>
+              )}
+            </div>
+            <div className="flex min-w-0 flex-col gap-1">
+              <strong className="max-w-[220px] truncate text-sm">{activeCentre?.nom ?? (centresLoading ? 'Chargement du centre…' : 'Centre non défini')}</strong>
+              <div className="flex flex-wrap items-center gap-2 text-xs">
+                {activeCentre && (
+                  <span className={activeCentre.actif ? 'rounded-full bg-emerald-400/20 px-2 py-0.5 text-emerald-100' : 'rounded-full bg-rose-400/20 px-2 py-0.5 text-rose-100'}>
+                    {activeCentre.actif ? 'Centre actif' : 'Centre suspendu'}
+                  </span>
+                )}
+                {activeCentre?.type_abonnement && <span>Pack : <b>{activeCentre.type_abonnement}</b></span>}
+                {activeCentre?.statut_abonnement && <span>Abonnement : <b>{activeCentre.statut_abonnement}</b></span>}
+                {activeCentre?.date_expiration && (() => {
+                  const today = new Date();
+                  const localToday = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
+                  const days = Math.round((new Date(`${activeCentre.date_expiration}T12:00:00`).getTime() - new Date(`${localToday}T12:00:00`).getTime()) / 86400000);
+                  return (
+                    <span className={days < 0 ? 'font-bold text-rose-200' : days <= 30 ? 'font-bold text-amber-200' : 'text-white/90'}>
+                      Expiration : {activeCentre.date_expiration.split('-').reverse().join('/')} ({days < 0 ? `expiré depuis ${-days} j` : days === 0 ? 'expire aujourd’hui' : `${days} j restants`})
+                    </span>
+                  );
+                })()}
+                {!activeCentre?.type_abonnement && !activeCentre?.statut_abonnement && !activeCentre?.date_expiration && (
+                  <span className="text-white/75">Abonnement non défini</span>
+                )}
+              </div>
+            </div>
+            {profile.role === 'super_admin' && (
+          <div className="flex min-w-0 flex-wrap items-center gap-2 rounded-xl border border-white/15 bg-white/10 px-3 py-2">
+            <label className="whitespace-nowrap text-xs font-semibold text-white" htmlFor="sp-centre-select">
+              Centre actif
+            </label>
             <select
-              className="rounded-lg border border-line bg-white px-3 py-2 text-slate-900"
-              id="sp-active-centre"
-              onChange={(event) => setActiveCentreId(event.target.value)}
-              value={activeCentreId}
+              className="min-h-9 max-w-[220px] min-w-[150px] rounded-lg border border-slate-300 bg-white px-2 text-sm font-semibold text-slate-900"
+              disabled={centresLoading || centres.length === 0}
+              id="sp-centre-select"
+              onChange={(event) => setActiveCentreId(event.target.value || null)}
+              value={profile.centreId ?? ''}
             >
-              {activeCentres.length === 0 && <option value="">Aucun centre actif</option>}
-              {activeCentres.map((centre) => (
-                <option key={centre.id} value={centre.id}>{centre.name}</option>
+              {centres.length === 0 && <option value="">Aucun centre actif</option>}
+              {centres.map((centre) => (
+                <option key={centre.id} value={centre.id}>
+                  {centre.nom}
+                </option>
               ))}
             </select>
-          </label>
+            {centresError && (
+              <small className="w-full text-xs text-red-200">{centresError}</small>
+            )}
+          </div>
+            )}
+          </div>
         )}
         <div aria-label="Utilisateur connecté" className="sp-user">
           <strong>{profile.fullName || session?.user.email}</strong>
@@ -134,16 +281,27 @@ function ApplicationShell() {
             <NavIcon section="home" />
             <span className="sp-nav-label">Accueil</span>
           </NavLink>
-          {visibleSections.map((section) => (
+          {profile.role === 'super_admin' && (
             <NavLink
               className={({ isActive }) => navItemClass(isActive)}
-              key={section}
-              to={`/app/${section}`}
+              to="/app/vz"
             >
-              <NavIcon section={section} />
-              <span className="sp-nav-label">{SECTION_LABELS[section]}</span>
+              <NavIcon section="vz" />
+              <span className="sp-nav-label">Gérer les centres</span>
             </NavLink>
-          ))}
+          )}
+          {visibleSections
+            .filter((section) => !(profile.role === 'super_admin' && section === 'vz'))
+            .map((section) => (
+              <NavLink
+                className={({ isActive }) => navItemClass(isActive)}
+                key={section}
+                to={`/app/${section}`}
+              >
+                <NavIcon section={section} />
+                <span className="sp-nav-label">{SECTION_LABELS[section]}</span>
+              </NavLink>
+            ))}
         </nav>
 
         <main className="sp-app-content">
