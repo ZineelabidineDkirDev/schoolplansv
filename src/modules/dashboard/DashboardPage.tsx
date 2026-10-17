@@ -851,12 +851,27 @@ export function DashboardPage() {
           <h2>Formations les plus populaires</h2>
           {data.popularFormations.length ? (
             <ol className="dashboard-popular">
-              {data.popularFormations.map((formation) => (
-                <li key={formation.name}>
-                  <span>{formation.name}</span>
-                  <strong>{formation.studentCount}</strong>
-                </li>
-              ))}
+              {data.popularFormations.map((formation, index) => {
+                const maxStudents = Math.max(...data.popularFormations.map((item) => item.studentCount), 1);
+                const share = Math.round((formation.studentCount / maxStudents) * 100);
+                return (
+                  <li key={formation.name}>
+                    <div className="dashboard-popular-rank" aria-label={`Rang ${index + 1}`}>
+                      {String(index + 1).padStart(2, '0')}
+                    </div>
+                    <div className="dashboard-popular-content">
+                      <div className="dashboard-popular-line">
+                        <span title={formation.name}>{formation.name}</span>
+                        <strong>{formation.studentCount}</strong>
+                      </div>
+                      <div className="dashboard-popular-track" aria-hidden="true">
+                        <span style={{ width: `${share}%` }} />
+                      </div>
+                      <small>{formation.studentCount === 1 ? 'étudiant inscrit' : 'étudiants inscrits'}</small>
+                    </div>
+                  </li>
+                );
+              })}
             </ol>
           ) : (
             <Alert>Aucune formation trouvée.</Alert>
