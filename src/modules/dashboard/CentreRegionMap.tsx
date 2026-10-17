@@ -65,6 +65,12 @@ function loadLeaflet(): Promise<LeafletApi> {
   return leafletPromise;
 }
 
+function isAreaGeometry(value: unknown): boolean {
+  if (!value || typeof value !== 'object' || !('type' in value)) return false;
+  const type = (value as { type?: unknown }).type;
+  return type === 'Polygon' || type === 'MultiPolygon';
+}
+
 function textField(value: unknown): string | null {
   return typeof value === 'string' && value.trim() ? value.trim() : null;
 }
@@ -129,7 +135,7 @@ export function CentreRegionMap({ centreId }: { centreId: string }) {
           attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
         }).addTo(map);
 
-        const hasBoundary = Boolean(result.geojson && typeof result.geojson === 'object');
+        const hasBoundary = isAreaGeometry(result.geojson);
         if (hasBoundary) {
           const boundary = L.geoJSON(result.geojson, {
             style: { color: '#2563eb', weight: 3, opacity: 0.95, fillColor: '#60a5fa', fillOpacity: 0.16 },
