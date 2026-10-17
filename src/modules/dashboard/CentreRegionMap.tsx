@@ -86,16 +86,22 @@ function addressField(address: Record<string, unknown> | undefined, keys: string
 
 async function findCityBoundary(city: string, address: string | null): Promise<GeoJsonResult | null> {
   const candidates = [city, address].filter((value, index, values): value is string => Boolean(value) && values.indexOf(value) === index);
+  let fallback: GeoJsonResult | null = null;
   for (const candidate of candidates) {
-    const params = new URLSearchParams({ format: 'jsonv2', polygon_geojson: '1', addressdetails: '1', limit: '1', q: candidate.includes('Maroc') ? candidate : `${candidate}, Maroc` });
+    const params = new URLSearchParams({ format: 'jsonv2', polygon_geojson: '1', addressdetails: '1', limit: '5', q: candidate.includes('Maroc') ? candidate : `${candidate}, Maroc` });
     const response = await fetch(`https://nominatim.openstreetmap.org/search?${params.toString()}`, { headers: { Accept: 'application/json' } });
     if (!response.ok) continue;
     const result: unknown = await response.json();
-    if (!Array.isArray(result) || !result.length || typeof result[0] !== 'object' || result[0] === null) continue;
-    const first = result[0] as GeoJsonResult;
-    if (first.geojson && first.lat && first.lon) return first;
+    if (!Array.isArray(result)) continue;
+    for (const item of result) {
+      if (!item || typeof item !== 'object') continue;
+      const place = item as GeoJsonResult;
+      if (!place.lat || !place.lon) continue;
+      if (isAreaGeometry(place.geojson)) return place;
+      if (!fallback) fallback = place;
+    }
   }
-  return null;
+  return fallback;
 }
 
 export function CentreRegionMap({ centreId }: { centreId: string }) {
