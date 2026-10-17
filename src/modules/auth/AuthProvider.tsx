@@ -8,7 +8,9 @@ import {
   useState,
   type PropsWithChildren,
 } from 'react';
+
 import type { Session, SupabaseClient } from '@supabase/supabase-js';
+
 import { getCentrePermissions } from '../../data/repositories/centrePermissionRepository';
 import { getAuthProfile } from '../../data/repositories/profileRepository';
 import { getSupabaseClient } from '../../data/supabase/client';
@@ -19,7 +21,12 @@ import { hasPasswordAuthMethod } from './authSession';
 export type ActiveCentre = { id: string; name: string };
 
 export type AuthStatus =
-  'loading' | 'anonymous' | 'authenticated' | 'pending' | 'error' | 'configuration_error';
+  | 'loading'
+  | 'anonymous'
+  | 'authenticated'
+  | 'pending'
+  | 'error'
+  | 'configuration_error';
 
 type AuthContextValue = {
   status: AuthStatus;
@@ -27,7 +34,6 @@ type AuthContextValue = {
   profile: AuthProfile | null;
   activeCentres: ActiveCentre[];
   activeCentreId: string;
-  setActiveCentreId: (centreId: string) => void;
   permissions: CentrePermissions;
   permissionErrors: string[];
   mustChangePassword: boolean;
@@ -43,13 +49,16 @@ type AuthContextValue = {
 const AuthContext = createContext<AuthContextValue | null>(null);
 
 function errorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : 'Une erreur inattendue est survenue.';
+  return error instanceof Error
+    ? error.message
+    : 'Une erreur inattendue est survenue.';
 }
 
 export function AuthProvider({ children }: PropsWithChildren) {
   const clientRef = useRef<SupabaseClient | null>(null);
   const requestVersion = useRef(0);
   const signOutMessage = useRef<string | null>(null);
+
   const [status, setStatus] = useState<AuthStatus>('loading');
   const [session, setSession] = useState<Session | null>(null);
   const [profile, setProfile] = useState<AuthProfile | null>(null);
@@ -67,6 +76,7 @@ export function AuthProvider({ children }: PropsWithChildren) {
       if (!nextSession) {
         const pendingMessage = signOutMessage.current;
         signOutMessage.current = null;
+
         setError(pendingMessage);
         setSession(null);
         setProfile(null);
@@ -88,54 +98,79 @@ export function AuthProvider({ children }: PropsWithChildren) {
 
       try {
         const databaseProfile = await getAuthProfile(client, nextSession.user.id);
+
         const storedCentreId =
           databaseProfile.role === 'super_admin'
             ? window.localStorage.getItem('schoolplans_current_centre')
             : null;
+
         const nextProfile =
           databaseProfile.role === 'super_admin' && storedCentreId
             ? { ...databaseProfile, centreId: storedCentreId }
             : databaseProfile;
 
-        if (nextProfile.role === 'admin' && !hasPasswordAuthMethod(nextSession)) {
+        if (
+          nextProfile.role === 'admin' &&
+          !hasPasswordAuthMethod(nextSession)
+        ) {
           const message =
             'Le compte administrateur ne peut pas se connecter avec Google. Utilisez l’e-mail et le mot de passe.';
+
           signOutMessage.current = message;
+
           const { error: signOutError } = await client.auth.signOut();
+
           if (signOutError) {
             signOutMessage.current = null;
             throw signOutError;
           }
+
           if (version === requestVersion.current) {
             setSession(null);
             setProfile(null);
             setStatus('anonymous');
             setError(message);
           }
+
           return;
         }
 
         setError(null);
+
         let nextActiveCentres: ActiveCentre[] = [];
         let nextActiveCentreId = '';
+
         if (nextProfile.role === 'super_admin') {
           const { data: centreRows, error: centresError } = await client
             .from('centres')
             .select('id, nom')
             .eq('actif', true)
             .order('nom', { ascending: true });
+
           if (centresError) throw centresError;
+
           nextActiveCentres = (centreRows ?? []).flatMap((row) =>
             typeof row.id === 'string' && typeof row.nom === 'string'
               ? [{ id: row.id, name: row.nom }]
               : [],
           );
-          const savedCentreId = window.localStorage.getItem('schoolplans_current_centre') ?? '';
-          nextActiveCentreId = nextActiveCentres.some((centre) => centre.id === savedCentreId)
+
+          const savedCentreId =
+            window.localStorage.getItem('schoolplans_current_centre') ?? '';
+
+          nextActiveCentreId = nextActiveCentres.some(
+            (centre) => centre.id === savedCentreId,
+          )
             ? savedCentreId
             : (nextActiveCentres[0]?.id ?? '');
+
           if (nextActiveCentreId) {
-            window.localStorage.setItem('schoolplans_current_centre', nextActiveCentreId);
+            window.localStorage.setItem(
+              'schoolplans_current_centre',
+              nextActiveCentreId,
+            );
+          } else {
+            window.localStorage.removeItem('schoolplans_current_centre');
           }
         }
 
@@ -143,6 +178,7 @@ export function AuthProvider({ children }: PropsWithChildren) {
           client,
           nextProfile.role === 'super_admin',
         );
+
         if (version !== requestVersion.current) return;
 
         setSession(nextSession);
@@ -151,10 +187,15 @@ export function AuthProvider({ children }: PropsWithChildren) {
         setActiveCentreIdState(nextActiveCentreId);
         setPermissions(permissionLoad.permissions);
         setPermissionErrors(permissionLoad.failedKeys);
-        setMustChangePassword(nextSession.user.user_metadata?.must_change === true);
-        setStatus(isPendingStudent(nextProfile) ? 'pending' : 'authenticated');
+        setMustChangePassword(
+          nextSession.user.user_metadata?.must_change === true,
+        );
+        setStatus(
+          isPendingStudent(nextProfile) ? 'pending' : 'authenticated',
+        );
       } catch (cause) {
         if (version !== requestVersion.current) return;
+
         signOutMessage.current = null;
         setError(errorMessage(cause));
         setStatus('error');
@@ -173,16 +214,21 @@ export function AuthProvider({ children }: PropsWithChildren) {
     } catch (cause) {
       setError(errorMessage(cause));
       setStatus('configuration_error');
+
       return () => {
         active = false;
       };
     }
 
-    const { data } = client.auth.onAuthStateChange((_event, nextSession) => {
-      window.setTimeout(() => {
-        if (active) void resolveSession(client, nextSession);
-      }, 0);
-    });
+    const { data } = client.auth.onAuthStateChange(
+      (_event, nextSession) => {
+        window.setTimeout(() => {
+          if (active) {
+            void resolveSession(client, nextSession);
+          }
+        }, 0);
+      },
+    );
 
     return () => {
       active = false;
@@ -198,21 +244,53 @@ export function AuthProvider({ children }: PropsWithChildren) {
         'Supabase n’est pas configuré. Renseignez les variables VITE_SUPABASE_URL et VITE_SUPABASE_ANON_KEY.',
       );
     }
+
     return clientRef.current;
   }, []);
 
-  const setActiveCentreId = useCallback((centreId: string) => {
-    if (!activeCentres.some((centre) => centre.id === centreId)) return;
-    window.localStorage.setItem('schoolplans_current_centre', centreId);
-    setActiveCentreIdState(centreId);
-  }, [activeCentres]);
+  const setActiveCentreId = useCallback(
+    (centreId: string | null) => {
+      if (
+        centreId &&
+        !activeCentres.some((centre) => centre.id === centreId)
+      ) {
+        return;
+      }
+
+      if (centreId) {
+        window.localStorage.setItem(
+          'schoolplans_current_centre',
+          centreId,
+        );
+      } else {
+        window.localStorage.removeItem('schoolplans_current_centre');
+      }
+
+      setActiveCentreIdState(centreId ?? '');
+
+      setProfile((current) => {
+        if (
+          !current ||
+          current.role !== 'super_admin' ||
+          current.centreId === centreId
+        ) {
+          return current;
+        }
+
+        return { ...current, centreId };
+      });
+    },
+    [activeCentres],
+  );
 
   const signIn = useCallback(
     async (email: string, password: string) => {
-      const { error: authError } = await requireClient().auth.signInWithPassword({
-        email: email.trim(),
-        password,
-      });
+      const { error: authError } =
+        await requireClient().auth.signInWithPassword({
+          email: email.trim(),
+          password,
+        });
+
       if (authError) throw authError;
     },
     [requireClient],
@@ -227,50 +305,43 @@ export function AuthProvider({ children }: PropsWithChildren) {
           emailRedirectTo: `${window.location.origin}${window.location.pathname}`,
         },
       });
+
       if (authError) throw authError;
     },
     [requireClient],
   );
 
   const signInWithGoogle = useCallback(async () => {
-    const { error: authError } = await requireClient().auth.signInWithOAuth({
-      provider: 'google',
-      options: {
-        redirectTo: `${window.location.origin}${window.location.pathname}`,
-        queryParams: { prompt: 'select_account' },
-      },
-    });
+    const { error: authError } =
+      await requireClient().auth.signInWithOAuth({
+        provider: 'google',
+        options: {
+          redirectTo: `${window.location.origin}${window.location.pathname}`,
+          queryParams: { prompt: 'select_account' },
+        },
+      });
+
     if (authError) throw authError;
   }, [requireClient]);
 
   const signOut = useCallback(async () => {
     signOutMessage.current = null;
     setError(null);
+
     const { error: authError } = await requireClient().auth.signOut();
+
     if (authError) setError(authError.message);
   }, [requireClient]);
-
-  const setActiveCentreId = useCallback((centreId: string | null) => {
-    if (centreId) {
-      window.localStorage.setItem('schoolplans_current_centre', centreId);
-    } else {
-      window.localStorage.removeItem('schoolplans_current_centre');
-    }
-    setProfile((current) => {
-      if (!current || current.role !== 'super_admin' || current.centreId === centreId) {
-        return current;
-      }
-      return { ...current, centreId };
-    });
-  }, []);
 
   const changePassword = useCallback(
     async (password: string) => {
       const client = requireClient();
+
       const { error: updateError } = await client.auth.updateUser({
         password,
         data: { must_change: false },
       });
+
       if (updateError) throw updateError;
 
       setMustChangePassword(false);
@@ -278,9 +349,10 @@ export function AuthProvider({ children }: PropsWithChildren) {
     [requireClient],
   );
 
-  const exposedProfile = profile && profile.role === 'super_admin'
-    ? { ...profile, centreId: activeCentreId || null }
-    : profile;
+  const exposedProfile =
+    profile && profile.role === 'super_admin'
+      ? { ...profile, centreId: activeCentreId || null }
+      : profile;
 
   const value = useMemo<AuthContextValue>(
     () => ({
@@ -289,7 +361,6 @@ export function AuthProvider({ children }: PropsWithChildren) {
       profile: exposedProfile,
       activeCentres,
       activeCentreId,
-      setActiveCentreId,
       permissions,
       permissionErrors,
       mustChangePassword,
@@ -307,7 +378,6 @@ export function AuthProvider({ children }: PropsWithChildren) {
       exposedProfile,
       activeCentres,
       activeCentreId,
-      setActiveCentreId,
       permissions,
       permissionErrors,
       mustChangePassword,
@@ -321,13 +391,19 @@ export function AuthProvider({ children }: PropsWithChildren) {
     ],
   );
 
-  return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
+  return (
+    <AuthContext.Provider value={value}>
+      {children}
+    </AuthContext.Provider>
+  );
 }
 
 export function useAuth(): AuthContextValue {
   const context = useContext(AuthContext);
+
   if (!context) {
     throw new Error('useAuth must be used inside AuthProvider.');
   }
+
   return context;
 }

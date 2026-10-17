@@ -67,15 +67,16 @@ function AuthenticatedContent() {
 }
 
 function ApplicationShell() {
-  const {
-    profile,
-    session,
-    permissions,
-    permissionErrors,
-    error: authError,
-    signOut,
-    setActiveCentreId,
-  } = useAuth();
+ const {
+  profile,
+  session,
+  permissions,
+  permissionErrors,
+  error: authError,
+  signOut,
+  activeCentreId,
+  setActiveCentreId,
+} = useAuth();
   type CentreHeaderInfo = {
     id: string;
     nom: string;
