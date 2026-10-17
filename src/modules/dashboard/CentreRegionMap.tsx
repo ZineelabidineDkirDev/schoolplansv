@@ -20,7 +20,7 @@ type LeafletMap = {
   invalidateSize(): void;
 };
 type LeafletLayer = { addTo(map: LeafletMap): LeafletLayer; bindPopup(content: string): LeafletLayer };
-type LeafletGeoJson = LeafletLayer & { getBounds(): LeafletBounds };
+type LeafletGeoJson = { addTo(map: LeafletMap): LeafletGeoJson; getBounds(): LeafletBounds };
 type LeafletApi = {
   map(element: HTMLElement, options?: Record<string, unknown>): LeafletMap;
   tileLayer(url: string, options: Record<string, unknown>): LeafletLayer;
@@ -36,7 +36,7 @@ let leafletPromise: Promise<LeafletApi> | null = null;
 function loadLeaflet(): Promise<LeafletApi> {
   if (window.L) return Promise.resolve(window.L);
   if (leafletPromise) return leafletPromise;
-  leafletPromise = new Promise((resolve, reject) => {
+  const pending: Promise<LeafletApi> = new Promise<LeafletApi>((resolve, reject) => {
     const cssId = 'schoolplans-leaflet-css';
     if (!document.getElementById(cssId)) {
       const link = document.createElement('link');
@@ -58,11 +58,12 @@ function loadLeaflet(): Promise<LeafletApi> {
     script.onload = () => window.L ? resolve(window.L) : reject(new Error('La bibliothèque cartographique n’a pas démarré.'));
     script.onerror = () => reject(new Error('Impossible de charger la bibliothèque cartographique.'));
     document.head.appendChild(script);
-  }).catch((error: unknown) => {
+  }).catch((error: unknown): never => {
     leafletPromise = null;
     throw error;
   });
-  return leafletPromise;
+  leafletPromise = pending;
+  return pending;
 }
 
 function isAreaGeometry(value: unknown): boolean {
