@@ -11,6 +11,7 @@ import { getDashboardData } from '../../data/repositories/dashboardRepository';
 import { getSupabaseClient } from '../../data/supabase/client';
 import type { DashboardData, DashboardDateRange } from '../../types/dashboard';
 import { useAuth } from '../auth/AuthProvider';
+import { CentreRegionMap } from './CentreRegionMap';
 
 type DashboardState =
   | { status: 'loading' }
@@ -931,14 +932,7 @@ export function DashboardPage() {
           <div className="dashboard-future-visual" aria-hidden="true"><div className="dashboard-future-donut"><span>DH</span></div><div className="dashboard-future-legend"><i /><i /><i /></div></div>
           <p className="dashboard-insight-empty">Graphiques prêts à être connectés aux données de paiement : recettes mensuelles, montants dus et paiements en attente. Aucun montant fictif n’est affiché.</p>
         </Panel>
-        <Panel className="dashboard-insight-panel dashboard-insight-future">
-          <div className="dashboard-insight-heading">
-            <span className="dashboard-insight-icon is-amber">⌖</span>
-            <div><h2>Carte des centres par région</h2><p>Répartition géographique au Maroc</p></div>
-          </div>
-          <div className="dashboard-map-preview" aria-hidden="true"><div className="dashboard-map-grid" /><span className="map-pin pin-one">●</span><span className="map-pin pin-two">●</span><span className="map-pin pin-three">●</span><span className="map-pin pin-four">●</span><div className="dashboard-map-label">Carte à connecter</div></div>
-          <p className="dashboard-insight-empty">Pour placer les centres sur une vraie carte, il faut récupérer leurs villes ou coordonnées et respecter les droits d’accès. Les marqueurs ci-dessus sont décoratifs et ne représentent pas des centres réels.</p>
-        </Panel>
+        <CentreRegionMap centreId={profile?.centreId ?? ''} />
       </div>
     </section>
   );
