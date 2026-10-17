@@ -8,9 +8,7 @@ import {
   useState,
   type PropsWithChildren,
 } from 'react';
-
 import type { Session, SupabaseClient } from '@supabase/supabase-js';
-
 import { getCentrePermissions } from '../../data/repositories/centrePermissionRepository';
 import { getAuthProfile } from '../../data/repositories/profileRepository';
 import { getSupabaseClient } from '../../data/supabase/client';
@@ -97,7 +95,10 @@ export function AuthProvider({ children }: PropsWithChildren) {
       setStatus('loading');
 
       try {
-        const databaseProfile = await getAuthProfile(client, nextSession.user.id);
+        const databaseProfile = await getAuthProfile(
+          client,
+          nextSession.user.id,
+        );
 
         const storedCentreId =
           databaseProfile.role === 'super_admin'
@@ -118,7 +119,8 @@ export function AuthProvider({ children }: PropsWithChildren) {
 
           signOutMessage.current = message;
 
-          const { error: signOutError } = await client.auth.signOut();
+          const { error: signOutError } =
+            await client.auth.signOut();
 
           if (signOutError) {
             signOutMessage.current = null;
@@ -141,22 +143,26 @@ export function AuthProvider({ children }: PropsWithChildren) {
         let nextActiveCentreId = '';
 
         if (nextProfile.role === 'super_admin') {
-          const { data: centreRows, error: centresError } = await client
-            .from('centres')
-            .select('id, nom')
-            .eq('actif', true)
-            .order('nom', { ascending: true });
+          const { data: centreRows, error: centresError } =
+            await client
+              .from('centres')
+              .select('id, nom')
+              .eq('actif', true)
+              .order('nom', { ascending: true });
 
           if (centresError) throw centresError;
 
           nextActiveCentres = (centreRows ?? []).flatMap((row) =>
-            typeof row.id === 'string' && typeof row.nom === 'string'
+            typeof row.id === 'string' &&
+            typeof row.nom === 'string'
               ? [{ id: row.id, name: row.nom }]
               : [],
           );
 
           const savedCentreId =
-            window.localStorage.getItem('schoolplans_current_centre') ?? '';
+            window.localStorage.getItem(
+              'schoolplans_current_centre',
+            ) ?? '';
 
           nextActiveCentreId = nextActiveCentres.some(
             (centre) => centre.id === savedCentreId,
@@ -169,8 +175,6 @@ export function AuthProvider({ children }: PropsWithChildren) {
               'schoolplans_current_centre',
               nextActiveCentreId,
             );
-          } else {
-            window.localStorage.removeItem('schoolplans_current_centre');
           }
         }
 
@@ -191,7 +195,9 @@ export function AuthProvider({ children }: PropsWithChildren) {
           nextSession.user.user_metadata?.must_change === true,
         );
         setStatus(
-          isPendingStudent(nextProfile) ? 'pending' : 'authenticated',
+          isPendingStudent(nextProfile)
+            ? 'pending'
+            : 'authenticated',
         );
       } catch (cause) {
         if (version !== requestVersion.current) return;
@@ -248,6 +254,61 @@ export function AuthProvider({ children }: PropsWithChildren) {
     return clientRef.current;
   }, []);
 
+  const signIn = useCallback(
+    async (email: string, password: string) => {
+      const { error: authError } =
+        await requireClient().auth.signInWithPassword({
+          email: email.trim(),
+          password,
+        });
+
+      if (authError) throw authError;
+    },
+    [requireClient],
+  );
+
+  const signUp = useCallback(
+    async (email: string, password: string) => {
+      const { error: authError } =
+        await requireClient().auth.signUp({
+          email: email.trim(),
+          password,
+          options: {
+            emailRedirectTo:
+              `${window.location.origin}${window.location.pathname}`,
+          },
+        });
+
+      if (authError) throw authError;
+    },
+    [requireClient],
+  );
+
+  const signInWithGoogle = useCallback(async () => {
+    const { error: authError } =
+      await requireClient().auth.signInWithOAuth({
+        provider: 'google',
+        options: {
+          redirectTo:
+            `${window.location.origin}${window.location.pathname}`,
+          queryParams: { prompt: 'select_account' },
+        },
+      });
+
+    if (authError) throw authError;
+  }, [requireClient]);
+
+  const signOut = useCallback(async () => {
+    signOutMessage.current = null;
+    setError(null);
+
+    const { error: authError } =
+      await requireClient().auth.signOut();
+
+    if (authError) setError(authError.message);
+  }, [requireClient]);
+
+  // Une seule déclaration : évite l'erreur de variable en double.
   const setActiveCentreId = useCallback(
     (centreId: string | null) => {
       if (
@@ -263,7 +324,9 @@ export function AuthProvider({ children }: PropsWithChildren) {
           centreId,
         );
       } else {
-        window.localStorage.removeItem('schoolplans_current_centre');
+        window.localStorage.removeItem(
+          'schoolplans_current_centre',
+        );
       }
 
       setActiveCentreIdState(centreId ?? '');
@@ -283,64 +346,15 @@ export function AuthProvider({ children }: PropsWithChildren) {
     [activeCentres],
   );
 
-  const signIn = useCallback(
-    async (email: string, password: string) => {
-      const { error: authError } =
-        await requireClient().auth.signInWithPassword({
-          email: email.trim(),
-          password,
-        });
-
-      if (authError) throw authError;
-    },
-    [requireClient],
-  );
-
-  const signUp = useCallback(
-    async (email: string, password: string) => {
-      const { error: authError } = await requireClient().auth.signUp({
-        email: email.trim(),
-        password,
-        options: {
-          emailRedirectTo: `${window.location.origin}${window.location.pathname}`,
-        },
-      });
-
-      if (authError) throw authError;
-    },
-    [requireClient],
-  );
-
-  const signInWithGoogle = useCallback(async () => {
-    const { error: authError } =
-      await requireClient().auth.signInWithOAuth({
-        provider: 'google',
-        options: {
-          redirectTo: `${window.location.origin}${window.location.pathname}`,
-          queryParams: { prompt: 'select_account' },
-        },
-      });
-
-    if (authError) throw authError;
-  }, [requireClient]);
-
-  const signOut = useCallback(async () => {
-    signOutMessage.current = null;
-    setError(null);
-
-    const { error: authError } = await requireClient().auth.signOut();
-
-    if (authError) setError(authError.message);
-  }, [requireClient]);
-
   const changePassword = useCallback(
     async (password: string) => {
       const client = requireClient();
 
-      const { error: updateError } = await client.auth.updateUser({
-        password,
-        data: { must_change: false },
-      });
+      const { error: updateError } =
+        await client.auth.updateUser({
+          password,
+          data: { must_change: false },
+        });
 
       if (updateError) throw updateError;
 
@@ -361,6 +375,7 @@ export function AuthProvider({ children }: PropsWithChildren) {
       profile: exposedProfile,
       activeCentres,
       activeCentreId,
+      setActiveCentreId,
       permissions,
       permissionErrors,
       mustChangePassword,
@@ -370,7 +385,6 @@ export function AuthProvider({ children }: PropsWithChildren) {
       signInWithGoogle,
       signOut,
       changePassword,
-      setActiveCentreId,
     }),
     [
       status,
@@ -378,6 +392,7 @@ export function AuthProvider({ children }: PropsWithChildren) {
       exposedProfile,
       activeCentres,
       activeCentreId,
+      setActiveCentreId,
       permissions,
       permissionErrors,
       mustChangePassword,
@@ -387,7 +402,6 @@ export function AuthProvider({ children }: PropsWithChildren) {
       signInWithGoogle,
       signOut,
       changePassword,
-      setActiveCentreId,
     ],
   );
 
