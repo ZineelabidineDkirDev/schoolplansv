@@ -10,7 +10,7 @@ function createClient(options: {
 } = {}) {
   const calls: Array<{ table: string; method: string; args: unknown[] }> = [];
   const from = vi.fn((table: string) => {
-    const query: Record<string, (...args: unknown[]) => unknown> = {};
+    const query: Record<string, any> = {};
     for (const method of ['select', 'eq', 'update', 'insert', 'delete']) {
       query[method] = (...args: unknown[]) => {
         calls.push({ table, method, args });
@@ -21,8 +21,8 @@ function createClient(options: {
       data: options.single?.[table] ?? null,
       error: null,
     }));
-    query.then = (resolve: (value: Result) => unknown) =>
-      Promise.resolve({ data: options.lists?.[table] ?? [], error: null }).then(resolve);
+    query.then = (resolve: (value: Result) => unknown, reject?: (reason: unknown) => unknown) =>
+      Promise.resolve({ data: options.lists?.[table] ?? [], error: null }).then(resolve, reject);
     return query;
   });
   return { client: { from } as unknown as SupabaseClient, calls, from };

@@ -11,6 +11,7 @@ import { getDashboardData } from '../../data/repositories/dashboardRepository';
 import { getSupabaseClient } from '../../data/supabase/client';
 import type { DashboardData, DashboardDateRange } from '../../types/dashboard';
 import { useAuth } from '../auth/AuthProvider';
+import { CentreRegionMap } from './CentreRegionMap';
 
 type DashboardState =
   | { status: 'loading' }
@@ -851,12 +852,27 @@ export function DashboardPage() {
           <h2>Formations les plus populaires</h2>
           {data.popularFormations.length ? (
             <ol className="dashboard-popular">
-              {data.popularFormations.map((formation) => (
-                <li key={formation.name}>
-                  <span>{formation.name}</span>
-                  <strong>{formation.studentCount}</strong>
-                </li>
-              ))}
+              {data.popularFormations.map((formation, index) => {
+                const maxStudents = Math.max(...data.popularFormations.map((item) => item.studentCount), 1);
+                const share = Math.round((formation.studentCount / maxStudents) * 100);
+                return (
+                  <li key={formation.name}>
+                    <div className="dashboard-popular-rank" aria-label={`Rang ${index + 1}`}>
+                      {String(index + 1).padStart(2, '0')}
+                    </div>
+                    <div className="dashboard-popular-content">
+                      <div className="dashboard-popular-line">
+                        <span title={formation.name}>{formation.name}</span>
+                        <strong>{formation.studentCount}</strong>
+                      </div>
+                      <div className="dashboard-popular-track" aria-hidden="true">
+                        <span style={{ width: `${share}%` }} />
+                      </div>
+                      <small>{formation.studentCount === 1 ? 'étudiant inscrit' : 'étudiants inscrits'}</small>
+                    </div>
+                  </li>
+                );
+              })}
             </ol>
           ) : (
             <Alert>Aucune formation trouvée.</Alert>
@@ -866,6 +882,57 @@ export function DashboardPage() {
           <h2>Répartition par domaine</h2>
           <DomainDistribution values={metrics.domainDistribution} />
         </Panel>
+      </div>
+
+      <div className="dashboard-insights-grid">
+        <Panel className="dashboard-insight-panel">
+          <div className="dashboard-insight-heading">
+            <span className="dashboard-insight-icon is-green">↗</span>
+            <div><h2>Présences et absences</h2><p>Répartition des statuts enregistrés</p></div>
+          </div>
+          {(() => {
+            const statuses = [
+              { label: 'Présent', value: data.presences.filter((item) => ['present', 'présent'].includes(item.status.toLowerCase())).length, color: 'is-green' },
+              { label: 'Retard', value: data.presences.filter((item) => item.status.toLowerCase() === 'retard').length, color: 'is-amber' },
+              { label: 'Absent', value: data.presences.filter((item) => ['absent', 'absence'].includes(item.status.toLowerCase())).length, color: 'is-rose' },
+            ];
+            const total = statuses.reduce((sum, item) => sum + item.value, 0);
+            return total ? <div className="dashboard-insight-bars">{statuses.map((item) => <div className="dashboard-insight-bar-row" key={item.label}><div><span>{item.label}</span><strong>{item.value}</strong></div><div className="dashboard-insight-track"><span className={item.color} style={{ width: `${Math.round(item.value / total * 100)}%` }} /></div></div>)}</div> : <p className="dashboard-insight-empty">Les graphiques apparaîtront dès que des présences seront enregistrées.</p>;
+          })()}
+        </Panel>
+        <Panel className="dashboard-insight-panel">
+          <div className="dashboard-insight-heading">
+            <span className="dashboard-insight-icon is-blue">◫</span>
+            <div><h2>Charge des formateurs</h2><p>Nombre de cours par formateur</p></div>
+          </div>
+          {(() => {
+            const counts = data.teachers.map((teacher) => ({ name: teacher.name, count: data.courses.filter((course) => String(course.teacherId) === String(teacher.id)).length })).sort((a,b) => b.count-a.count).slice(0,5);
+            const max = Math.max(1, ...counts.map((item) => item.count));
+            return counts.length ? <div className="dashboard-insight-bars">{counts.map((item) => <div className="dashboard-insight-bar-row" key={item.name}><div><span title={item.name}>{item.name}</span><strong>{item.count}</strong></div><div className="dashboard-insight-track"><span className="is-blue" style={{ width: `${Math.round(item.count / max * 100)}%` }} /></div></div>)}</div> : <p className="dashboard-insight-empty">Aucun formateur disponible pour cette vue.</p>;
+          })()}
+        </Panel>
+        <Panel className="dashboard-insight-panel">
+          <div className="dashboard-insight-heading">
+            <span className="dashboard-insight-icon is-violet">▦</span>
+            <div><h2>Utilisation des salles</h2><p>Répartition des cours par salle renseignée</p></div>
+          </div>
+          {(() => {
+            const counts = new Map<string, number>();
+            data.courses.forEach((course) => { if (course.roomName) counts.set(course.roomName, (counts.get(course.roomName) ?? 0) + 1); });
+            const values = [...counts].map(([name, count]) => ({ name, count })).sort((a,b) => b.count-a.count).slice(0,5);
+            const max = Math.max(1, ...values.map((item) => item.count));
+            return values.length ? <div className="dashboard-insight-bars">{values.map((item) => <div className="dashboard-insight-bar-row" key={item.name}><div><span title={item.name}>{item.name}</span><strong>{item.count}</strong></div><div className="dashboard-insight-track"><span className="is-violet" style={{ width: `${Math.round(item.count / max * 100)}%` }} /></div></div>)}</div> : <p className="dashboard-insight-empty">Renseignez les salles dans les cours pour alimenter ce graphique.</p>;
+          })()}
+        </Panel>
+        <Panel className="dashboard-insight-panel dashboard-insight-future">
+          <div className="dashboard-insight-heading">
+            <span className="dashboard-insight-icon is-green">◉</span>
+            <div><h2>Paiements et recettes</h2><p>Analyse financière du centre</p></div>
+          </div>
+          <div className="dashboard-future-visual" aria-hidden="true"><div className="dashboard-future-donut"><span>DH</span></div><div className="dashboard-future-legend"><i /><i /><i /></div></div>
+          <p className="dashboard-insight-empty">Graphiques prêts à être connectés aux données de paiement : recettes mensuelles, montants dus et paiements en attente. Aucun montant fictif n’est affiché.</p>
+        </Panel>
+        <CentreRegionMap centreId={profile?.centreId ?? ''} />
       </div>
     </section>
   );

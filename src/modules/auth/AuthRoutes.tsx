@@ -192,62 +192,67 @@ function ApplicationShell() {
           <span>SchoolPlans</span>
         </Link>
         {['super_admin', 'admin', 'director'].includes(profile.role) && (
-          <div className="flex min-w-0 flex-wrap items-center gap-3 rounded-xl border border-white/15 bg-white/10 px-3 py-2 text-white">
-            <div className="grid h-11 w-11 shrink-0 place-items-center overflow-hidden rounded-lg bg-white">
+          <div className="sp-centre-banner">
+            <div className="sp-centre-banner-logo">
               {activeCentre?.logo_url ? (
-                <img alt={`Logo de ${activeCentre.nom}`} className="h-full w-full object-contain" src={activeCentre.logo_url} />
+                <img alt={`Logo de ${activeCentre.nom}`} src={activeCentre.logo_url} />
               ) : (
-                <span aria-hidden="true" className="text-xl">🏫</span>
+                <span aria-hidden="true">⌂</span>
               )}
             </div>
-            <div className="flex min-w-0 flex-col gap-1">
-              <strong className="max-w-[220px] truncate text-sm">{activeCentre?.nom ?? (centresLoading ? 'Chargement du centre…' : 'Centre non défini')}</strong>
-              <div className="flex flex-wrap items-center gap-2 text-xs">
+            <div className="sp-centre-banner-content">
+              <div className="sp-centre-banner-heading">
+                <span className="sp-centre-banner-eyebrow">Centre actif</span>
+                <strong title={activeCentre?.nom ?? undefined}>
+                  {activeCentre?.nom ?? (centresLoading ? 'Chargement du centre…' : 'Centre non défini')}
+                </strong>
                 {activeCentre && (
-                  <span className={activeCentre.actif ? 'rounded-full bg-emerald-400/20 px-2 py-0.5 text-emerald-100' : 'rounded-full bg-rose-400/20 px-2 py-0.5 text-rose-100'}>
-                    {activeCentre.actif ? 'Centre actif' : 'Centre suspendu'}
+                  <span className={`sp-centre-pill ${activeCentre.actif ? 'is-active' : 'is-suspended'}`}>
+                    <span aria-hidden="true" className="sp-centre-pill-dot" />
+                    {activeCentre.actif ? 'Actif' : 'Suspendu'}
                   </span>
                 )}
-                {activeCentre?.type_abonnement && <span>Pack : <b>{activeCentre.type_abonnement}</b></span>}
-                {activeCentre?.statut_abonnement && <span>Abonnement : <b>{activeCentre.statut_abonnement}</b></span>}
+              </div>
+              <div className="sp-centre-banner-meta">
+                {activeCentre?.type_abonnement && (
+                  <span><small>Pack</small><b>{activeCentre.type_abonnement}</b></span>
+                )}
+                {activeCentre?.statut_abonnement && (
+                  <span><small>Abonnement</small><b>{activeCentre.statut_abonnement}</b></span>
+                )}
                 {activeCentre?.date_expiration && (() => {
                   const today = new Date();
                   const localToday = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
                   const days = Math.round((new Date(`${activeCentre.date_expiration}T12:00:00`).getTime() - new Date(`${localToday}T12:00:00`).getTime()) / 86400000);
                   return (
-                    <span className={days < 0 ? 'font-bold text-rose-200' : days <= 30 ? 'font-bold text-amber-200' : 'text-white/90'}>
-                      Expiration : {activeCentre.date_expiration.split('-').reverse().join('/')} ({days < 0 ? `expiré depuis ${-days} j` : days === 0 ? 'expire aujourd’hui' : `${days} j restants`})
+                    <span className={days < 0 ? 'is-expired' : days <= 30 ? 'is-expiring' : ''}>
+                      <small>Expiration</small>
+                      <b>{activeCentre.date_expiration.split('-').reverse().join('/')}</b>
+                      <em>{days < 0 ? `Expiré depuis ${-days} j` : days === 0 ? 'Expire aujourd’hui' : `${days} j restants`}</em>
                     </span>
                   );
                 })()}
                 {!activeCentre?.type_abonnement && !activeCentre?.statut_abonnement && !activeCentre?.date_expiration && (
-                  <span className="text-white/75">Abonnement non défini</span>
+                  <span className="sp-centre-no-subscription">Abonnement non défini</span>
                 )}
               </div>
             </div>
             {profile.role === 'super_admin' && (
-          <div className="flex min-w-0 flex-wrap items-center gap-2 rounded-xl border border-white/15 bg-white/10 px-3 py-2">
-            <label className="whitespace-nowrap text-xs font-semibold text-white" htmlFor="sp-centre-select">
-              Centre actif
-            </label>
-            <select
-              className="min-h-9 max-w-[220px] min-w-[150px] rounded-lg border border-slate-300 bg-white px-2 text-sm font-semibold text-slate-900"
-              disabled={centresLoading || centres.length === 0}
-              id="sp-centre-select"
-              onChange={(event) => setActiveCentreId(event.target.value || null)}
-              value={profile.centreId ?? ''}
-            >
-              {centres.length === 0 && <option value="">Aucun centre actif</option>}
-              {centres.map((centre) => (
-                <option key={centre.id} value={centre.id}>
-                  {centre.nom}
-                </option>
-              ))}
-            </select>
-            {centresError && (
-              <small className="w-full text-xs text-red-200">{centresError}</small>
-            )}
-          </div>
+              <div className="sp-centre-switcher">
+                <label htmlFor="sp-centre-select">Changer de centre</label>
+                <select
+                  disabled={centresLoading || centres.length === 0}
+                  id="sp-centre-select"
+                  onChange={(event) => setActiveCentreId(event.target.value || null)}
+                  value={profile.centreId ?? ''}
+                >
+                  {centres.length === 0 && <option value="">Aucun centre actif</option>}
+                  {centres.map((centre) => (
+                    <option key={centre.id} value={centre.id}>{centre.nom}</option>
+                  ))}
+                </select>
+                {centresError && <small className="sp-centre-banner-error">{centresError}</small>}
+              </div>
             )}
           </div>
         )}

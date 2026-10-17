@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState, type FormEvent, type ReactNode } from 'react';
-import { Alert, Button, EmptyState, LoadingState, Modal, PageHeader, Panel } from '../../components/ui';
+import { Alert, Button, EmptyState, LoadingState, Modal, PageHeader, Panel, confirmAction, notify } from '../../components/ui';
 import { getWeekOccurrences } from '../../business/planning/planningSchedule';
 import { getPlanningData } from '../../data/repositories/planningRepository';
 import {
@@ -160,8 +160,16 @@ export function RoomsPage() {
   const [editingId, setEditingId] = useState<string | number | null>(null);
   const [formOpen, setFormOpen] = useState(false);
   const [saving, setSaving] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [message, setMessage] = useState<string | null>(null);
+  const [error, setErrorState] = useState<string | null>(null);
+  const setError = (value: string | null) => {
+    setErrorState(value);
+    if (value) notify(value, 'error');
+  };
+  const [message, setMessageState] = useState<string | null>(null);
+  const setMessage = (value: string | null) => {
+    setMessageState(value);
+    if (value) notify(value, 'success');
+  };
   const [form, setForm] = useState<RoomInput>({ name: '', type: '', capacity: 30 });
   const canManage = profile?.role === 'admin' || profile?.role === 'director';
   function openForm(room?: PlanningData['filters']['rooms'][number]) {
@@ -182,7 +190,7 @@ export function RoomsPage() {
     finally { setSaving(false); }
   }
   async function removeRoom(room: PlanningData['filters']['rooms'][number]) {
-    if (!profile?.centreId || !canManage || !window.confirm(`Supprimer la salle « ${room.name} » ?`)) return;
+    if (!profile?.centreId || !canManage || !await confirmAction(`Supprimer la salle « ${room.name} » ?`)) return;
     setError(null); setMessage(null);
     try { await deleteCentreRoom(getSupabaseClient(), profile.centreId, room.id); setMessage('Salle supprimée.'); reload(); }
     catch (cause) { setError(errorMessage(cause)); }
@@ -234,8 +242,16 @@ export function TeachersPage() {
   const [editingId, setEditingId] = useState<string | number | null>(null);
   const [formOpen, setFormOpen] = useState(false);
   const [saving, setSaving] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [message, setMessage] = useState<string | null>(null);
+  const [error, setErrorState] = useState<string | null>(null);
+  const setError = (value: string | null) => {
+    setErrorState(value);
+    if (value) notify(value, 'error');
+  };
+  const [message, setMessageState] = useState<string | null>(null);
+  const setMessage = (value: string | null) => {
+    setMessageState(value);
+    if (value) notify(value, 'success');
+  };
   const [form, setForm] = useState<TeacherInput>({ name: '', email: '' });
   const canManage = profile?.role === 'admin' || profile?.role === 'director';
   function openForm(teacher?: PlanningData['filters']['teachers'][number]) {
@@ -252,7 +268,7 @@ export function TeachersPage() {
     } catch (cause) { setError(errorMessage(cause)); } finally { setSaving(false); }
   }
   async function removeTeacher(teacher: PlanningData['filters']['teachers'][number]) {
-    if (!profile?.centreId || !canManage || !window.confirm(`Supprimer la fiche de ${teacher.name} ?`)) return;
+    if (!profile?.centreId || !canManage || !await confirmAction(`Supprimer la fiche de ${teacher.name} ?`)) return;
     setError(null); setMessage(null);
     try { await deleteCentreTeacher(getSupabaseClient(), profile.centreId, teacher.id); setMessage('Formateur supprimé.'); reload(); }
     catch (cause) { setError(errorMessage(cause)); }
@@ -262,8 +278,8 @@ export function TeachersPage() {
     {error && <Alert tone="error"><p>{error}</p></Alert>}{message && <Alert tone="success"><p>{message}</p></Alert>}
     {formOpen && canManage && <Modal label={editingId === null ? 'Nouveau formateur' : 'Modifier le formateur'} onClose={() => setFormOpen(false)}><Panel className="management-editor"><h2>{editingId === null ? 'Nouveau formateur' : 'Modifier le formateur'}</h2>
       <form className="sp-form-grid" onSubmit={(event) => void saveTeacher(event)}>
-        <label className="sp-form-field">Nom complet<input className="sp-field" required value={form.name} onChange={(event) => setForm((v) => ({ ...v, name: event.target.value }))} /></label>
-        <label className="sp-form-field">E-mail<input className="sp-field" type="email" value={form.email} onChange={(event) => setForm((v) => ({ ...v, email: event.target.value }))} /></label>
+        <label className="sp-form-field"><span className="sp-field-label">Nom complet</span><input className="sp-field" required value={form.name} onChange={(event) => setForm((v) => ({ ...v, name: event.target.value }))} /></label>
+        <label className="sp-form-field"><span className="sp-field-label">E-mail</span><input className="sp-field" type="email" value={form.email} onChange={(event) => setForm((v) => ({ ...v, email: event.target.value }))} /></label>
         <p className="management-muted">Le compte de connexion et les matières associées ne sont pas modifiés par ce formulaire.</p>
         <div className="management-toolbar"><Button disabled={saving} type="submit">{saving ? 'Enregistrement…' : 'Enregistrer'}</Button><Button onClick={() => setFormOpen(false)} type="button" variant="secondary">Annuler</Button></div>
       </form></Panel></Modal>}
@@ -295,8 +311,16 @@ export function FormationGroupsPage() {
   const [formOpen, setFormOpen] = useState(false);
   const [groupFormOpen, setGroupFormOpen] = useState(false);
   const [saving, setSaving] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [message, setMessage] = useState<string | null>(null);
+  const [error, setErrorState] = useState<string | null>(null);
+  const setError = (value: string | null) => {
+    setErrorState(value);
+    if (value) notify(value, 'error');
+  };
+  const [message, setMessageState] = useState<string | null>(null);
+  const setMessage = (value: string | null) => {
+    setMessageState(value);
+    if (value) notify(value, 'success');
+  };
   const [searchModules, setSearchModules] = useState('');
   const [newModuleName, setNewModuleName] = useState('');
   const [newModuleDomain, setNewModuleDomain] = useState('');
@@ -425,7 +449,7 @@ export function FormationGroupsPage() {
     if (
       !profile?.centreId ||
       !canManage ||
-      !window.confirm('Voulez-vous supprimer cette formation ?')
+      !await confirmAction('Voulez-vous supprimer cette formation ?')
     ) {
       return;
     }
@@ -488,7 +512,7 @@ export function FormationGroupsPage() {
   }
 
   async function handleDeleteGroup(groupId: string | number) {
-    if (!profile?.centreId || !canManage || !window.confirm('Voulez-vous supprimer ce groupe ?')) {
+    if (!profile?.centreId || !canManage || !await confirmAction('Voulez-vous supprimer ce groupe ?')) {
       return;
     }
     setError(null);
@@ -567,7 +591,7 @@ export function FormationGroupsPage() {
             onSubmit={(event) => void submitFormation(event)}
           >
             <label className="sp-form-field">
-              Nom de la formation
+              <span className="sp-field-label">Nom de la formation</span>
               <input
                 className="sp-field"
                 maxLength={150}
@@ -579,7 +603,7 @@ export function FormationGroupsPage() {
               />
             </label>
             <label className="sp-form-field">
-              Durée
+              <span className="sp-field-label">Durée</span>
               <input
                 className="sp-field"
                 onChange={(event) =>
@@ -590,7 +614,7 @@ export function FormationGroupsPage() {
               />
             </label>
             <label className="sp-form-field">
-              Heures par semaine
+              <span className="sp-field-label">Heures par semaine</span>
               <input
                 className="sp-field"
                 max="168"
@@ -608,7 +632,7 @@ export function FormationGroupsPage() {
               />
             </label>
             <label className="sp-form-field management-editor-wide">
-              Description
+              <span className="sp-field-label">Description</span>
               <textarea
                 className="sp-field management-textarea"
                 onChange={(event) =>
@@ -728,7 +752,7 @@ export function FormationGroupsPage() {
           </div>
           <form className="management-editor-form" onSubmit={(event) => void submitGroup(event)}>
             <label className="sp-form-field">
-              Nom du groupe
+              <span className="sp-field-label">Nom du groupe</span>
               <input
                 className="sp-field"
                 maxLength={100}
@@ -741,7 +765,7 @@ export function FormationGroupsPage() {
               />
             </label>
             <label className="sp-form-field">
-              Formation
+              <span className="sp-field-label">Formation</span>
               <select
                 className="sp-field"
                 onChange={(event) =>
@@ -761,7 +785,7 @@ export function FormationGroupsPage() {
               </select>
             </label>
             <label className="sp-form-field">
-              Formateur responsable
+              <span className="sp-field-label">Formateur responsable</span>
               <select
                 className="sp-field"
                 onChange={(event) =>
@@ -779,7 +803,7 @@ export function FormationGroupsPage() {
               </select>
             </label>
             <label className="sp-form-field">
-              Date de début
+              <span className="sp-field-label">Date de début</span>
               <input
                 className="sp-field"
                 onChange={(event) =>
@@ -791,7 +815,7 @@ export function FormationGroupsPage() {
               />
             </label>
             <label className="sp-form-field">
-              Capacité maximale
+              <span className="sp-field-label">Capacité maximale</span>
               <input
                 className="sp-field"
                 max="500"
@@ -1069,8 +1093,16 @@ export function StudentsPage() {
   const [editingId, setEditingId] = useState<string | number | null>(null);
   const [formOpen, setFormOpen] = useState(false);
   const [saving, setSaving] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [message, setMessage] = useState<string | null>(null);
+  const [error, setErrorState] = useState<string | null>(null);
+  const setError = (value: string | null) => {
+    setErrorState(value);
+    if (value) notify(value, 'error');
+  };
+  const [message, setMessageState] = useState<string | null>(null);
+  const setMessage = (value: string | null) => {
+    setMessageState(value);
+    if (value) notify(value, 'success');
+  };
   const [enrollmentIds, setEnrollmentIds] = useState<Record<string, Array<string | number>>>({});
   const [form, setForm] = useState<StudentRecordInput>({
     firstName: '', lastName: '', email: '', telephone: '', city: '', address: '', educationLevel: '',
@@ -1189,7 +1221,7 @@ export function StudentsPage() {
 
   async function removeStudent(student: ManagedStudent) {
     if (!profile?.centreId || !canManage) return;
-    if (!window.confirm(`Supprimer le dossier de ${student.firstName} ${student.lastName} ?`)) return;
+    if (!await confirmAction(`Supprimer le dossier de ${student.firstName} ${student.lastName} ?`)) return;
     setError(null);
     setMessage(null);
     try {
@@ -1201,14 +1233,14 @@ export function StudentsPage() {
     }
   }
 
-  const fields: Array<{ key: keyof StudentRecordInput; label: string; required?: boolean; type?: string }> = [
-    { key: 'firstName', label: 'Prénom', required: true },
-    { key: 'lastName', label: 'Nom', required: true },
-    { key: 'email', label: 'E-mail', type: 'email' },
-    { key: 'telephone', label: 'Téléphone', type: 'tel' },
-    { key: 'city', label: 'Ville' },
-    { key: 'address', label: 'Adresse' },
-    { key: 'educationLevel', label: 'Niveau d’études' },
+  const fields: Array<{ key: keyof StudentRecordInput; label: string; icon: string; required?: boolean; type?: string }> = [
+    { key: 'firstName', label: 'Prénom', icon: '♙', required: true },
+    { key: 'lastName', label: 'Nom', icon: '♙', required: true },
+    { key: 'email', label: 'E-mail', icon: '✉', type: 'email' },
+    { key: 'telephone', label: 'Téléphone', icon: '☎', type: 'tel' },
+    { key: 'city', label: 'Ville', icon: '⌖' },
+    { key: 'address', label: 'Adresse', icon: '⌂' },
+    { key: 'educationLevel', label: 'Niveau d’études', icon: '▤' },
   ];
 
   return (
@@ -1232,7 +1264,7 @@ export function StudentsPage() {
           <form className="sp-form-grid" onSubmit={(event) => void submitStudent(event)}>
             {fields.map((field) => (
               <label className="sp-form-field" key={field.key}>
-                {field.label}
+                <span className="sp-field-label">{field.label}</span>
                 <input
                   className="sp-field"
                   autoComplete="off"
@@ -1354,8 +1386,16 @@ export function AttendancePage() {
   const [date, setDate] = useState(() => isoDate(new Date()));
   const [sheet, setSheet] = useState<AttendanceSheet | null>(null);
   const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [message, setMessage] = useState<string | null>(null);
+  const [error, setErrorState] = useState<string | null>(null);
+  const setError = (value: string | null) => {
+    setErrorState(value);
+    if (value) notify(value, 'error');
+  };
+  const [message, setMessageState] = useState<string | null>(null);
+  const setMessage = (value: string | null) => {
+    setMessageState(value);
+    if (value) notify(value, 'success');
+  };
   const [revision, setRevision] = useState(0);
 
   const occurrences = useMemo(() => {

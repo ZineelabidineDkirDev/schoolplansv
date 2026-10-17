@@ -1,5 +1,5 @@
 import { useEffect, useState, type FormEvent } from 'react';
-import { Alert, Button, EmptyState, LoadingState, PageHeader, Panel } from '../../components/ui';
+import { Alert, Button, EmptyState, LoadingState, PageHeader, Panel, confirmAction, notify } from '../../components/ui';
 import {
   deleteCourseSupport,
   getCourseSupports,
@@ -47,7 +47,11 @@ export function SupportsPage() {
   const [description, setDescription] = useState('');
   const [file, setFile] = useState<File | null>(null);
   const [busy, setBusy] = useState(false);
-  const [message, setMessage] = useState<{ tone: 'success' | 'error'; text: string } | null>(null);
+  const [message, setMessageState] = useState<{ tone: 'success' | 'error'; text: string } | null>(null);
+  const setMessage = (value: { tone: 'success' | 'error'; text: string } | null) => {
+    setMessageState(value);
+    if (value) notify(value.text, value.tone === 'error' ? 'error' : 'success');
+  };
 
   useEffect(() => {
     let active = true;
@@ -181,7 +185,7 @@ export function SupportsPage() {
 
   async function removeSupport(support: CourseSupport) {
     if (!profile?.centreId || profile.role !== 'formateur' || state.status !== 'loaded') return;
-    if (!window.confirm('Supprimer ce document ?')) return;
+    if (!await confirmAction('Supprimer ce document ?')) return;
     const ownCourseIds = state.courses.map((course) => course.id);
     setMessage(null);
     try {
