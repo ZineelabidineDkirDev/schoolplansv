@@ -645,7 +645,7 @@ export function FormationGroupsPage() {
             <div className="management-editor-wide">
               <div className="management-module-picker-heading">
                 <div>
-                  <strong><span aria-hidden="true">▦</span> Modules de la formation</strong>
+                  <strong>Modules de la formation</strong>
                   <p className="management-muted">
                     {formationForm.moduleIds.length} module(s) sélectionné(s)
                   </p>
