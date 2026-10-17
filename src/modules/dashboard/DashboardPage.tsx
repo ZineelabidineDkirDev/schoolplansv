@@ -881,6 +881,7 @@ export function DashboardPage() {
           <h2>Répartition par domaine</h2>
           <DomainDistribution values={metrics.domainDistribution} />
         </Panel>
+      </div>
 
       <div className="dashboard-insights-grid">
         <Panel className="dashboard-insight-panel">
@@ -938,7 +939,6 @@ export function DashboardPage() {
           <div className="dashboard-map-preview" aria-hidden="true"><div className="dashboard-map-grid" /><span className="map-pin pin-one">●</span><span className="map-pin pin-two">●</span><span className="map-pin pin-three">●</span><span className="map-pin pin-four">●</span><div className="dashboard-map-label">Carte à connecter</div></div>
           <p className="dashboard-insight-empty">Pour placer les centres sur une vraie carte, il faut récupérer leurs villes ou coordonnées et respecter les droits d’accès. Les marqueurs ci-dessus sont décoratifs et ne représentent pas des centres réels.</p>
         </Panel>
-      </div>
       </div>
     </section>
   );
