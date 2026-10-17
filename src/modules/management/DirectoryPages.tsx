@@ -278,8 +278,8 @@ export function TeachersPage() {
     {error && <Alert tone="error"><p>{error}</p></Alert>}{message && <Alert tone="success"><p>{message}</p></Alert>}
     {formOpen && canManage && <Modal label={editingId === null ? 'Nouveau formateur' : 'Modifier le formateur'} onClose={() => setFormOpen(false)}><Panel className="management-editor"><h2>{editingId === null ? 'Nouveau formateur' : 'Modifier le formateur'}</h2>
       <form className="sp-form-grid" onSubmit={(event) => void saveTeacher(event)}>
-        <label className="sp-form-field"><span className="sp-field-label"><span aria-hidden="true">♙</span>Nom complet</span><input className="sp-field" required value={form.name} onChange={(event) => setForm((v) => ({ ...v, name: event.target.value }))} /></label>
-        <label className="sp-form-field"><span className="sp-field-label"><span aria-hidden="true">✉</span>E-mail</span><input className="sp-field" type="email" value={form.email} onChange={(event) => setForm((v) => ({ ...v, email: event.target.value }))} /></label>
+        <label className="sp-form-field"><span className="sp-field-label">Nom complet</span><input className="sp-field" required value={form.name} onChange={(event) => setForm((v) => ({ ...v, name: event.target.value }))} /></label>
+        <label className="sp-form-field"><span className="sp-field-label">E-mail</span><input className="sp-field" type="email" value={form.email} onChange={(event) => setForm((v) => ({ ...v, email: event.target.value }))} /></label>
         <p className="management-muted">Le compte de connexion et les matières associées ne sont pas modifiés par ce formulaire.</p>
         <div className="management-toolbar"><Button disabled={saving} type="submit">{saving ? 'Enregistrement…' : 'Enregistrer'}</Button><Button onClick={() => setFormOpen(false)} type="button" variant="secondary">Annuler</Button></div>
       </form></Panel></Modal>}
@@ -591,7 +591,7 @@ export function FormationGroupsPage() {
             onSubmit={(event) => void submitFormation(event)}
           >
             <label className="sp-form-field">
-              <span className="sp-field-label"><span aria-hidden="true">▤</span>Nom de la formation</span>
+              <span className="sp-field-label">Nom de la formation</span>
               <input
                 className="sp-field"
                 maxLength={150}
@@ -603,7 +603,7 @@ export function FormationGroupsPage() {
               />
             </label>
             <label className="sp-form-field">
-              <span className="sp-field-label"><span aria-hidden="true">◷</span>Durée</span>
+              <span className="sp-field-label">Durée</span>
               <input
                 className="sp-field"
                 onChange={(event) =>
@@ -614,7 +614,7 @@ export function FormationGroupsPage() {
               />
             </label>
             <label className="sp-form-field">
-              <span className="sp-field-label"><span aria-hidden="true">◴</span>Heures par semaine</span>
+              <span className="sp-field-label">Heures par semaine</span>
               <input
                 className="sp-field"
                 max="168"
@@ -632,7 +632,7 @@ export function FormationGroupsPage() {
               />
             </label>
             <label className="sp-form-field management-editor-wide">
-              <span className="sp-field-label"><span aria-hidden="true">☰</span>Description</span>
+              <span className="sp-field-label">Description</span>
               <textarea
                 className="sp-field management-textarea"
                 onChange={(event) =>
@@ -752,7 +752,7 @@ export function FormationGroupsPage() {
           </div>
           <form className="management-editor-form" onSubmit={(event) => void submitGroup(event)}>
             <label className="sp-form-field">
-              <span className="sp-field-label"><span aria-hidden="true">♧</span>Nom du groupe</span>
+              <span className="sp-field-label">Nom du groupe</span>
               <input
                 className="sp-field"
                 maxLength={100}
@@ -765,7 +765,7 @@ export function FormationGroupsPage() {
               />
             </label>
             <label className="sp-form-field">
-              <span className="sp-field-label"><span aria-hidden="true">▤</span>Formation</span>
+              <span className="sp-field-label">Formation</span>
               <select
                 className="sp-field"
                 onChange={(event) =>
@@ -785,7 +785,7 @@ export function FormationGroupsPage() {
               </select>
             </label>
             <label className="sp-form-field">
-              <span className="sp-field-label"><span aria-hidden="true">♙</span>Formateur responsable</span>
+              <span className="sp-field-label">Formateur responsable</span>
               <select
                 className="sp-field"
                 onChange={(event) =>
@@ -803,7 +803,7 @@ export function FormationGroupsPage() {
               </select>
             </label>
             <label className="sp-form-field">
-              <span className="sp-field-label"><span aria-hidden="true">▦</span>Date de début</span>
+              <span className="sp-field-label">Date de début</span>
               <input
                 className="sp-field"
                 onChange={(event) =>
@@ -815,7 +815,7 @@ export function FormationGroupsPage() {
               />
             </label>
             <label className="sp-form-field">
-              <span className="sp-field-label"><span aria-hidden="true">♧</span>Capacité maximale</span>
+              <span className="sp-field-label">Capacité maximale</span>
               <input
                 className="sp-field"
                 max="500"
@@ -1264,7 +1264,7 @@ export function StudentsPage() {
           <form className="sp-form-grid" onSubmit={(event) => void submitStudent(event)}>
             {fields.map((field) => (
               <label className="sp-form-field" key={field.key}>
-                <span className="sp-field-label"><span aria-hidden="true">{field.icon}</span>{field.label}</span>
+                <span className="sp-field-label">{field.label}</span>
                 <input
                   className="sp-field"
                   autoComplete="off"
