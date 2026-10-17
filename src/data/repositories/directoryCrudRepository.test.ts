@@ -8,14 +8,14 @@ import {
 function clientFor(options: { singles?: Record<string, unknown>; lists?: Record<string, unknown[]> } = {}) {
   const calls: Array<{ table: string; method: string; args: unknown[] }> = [];
   const from = vi.fn((table: string) => {
-    const query: Record<string, (...args: unknown[]) => unknown> = {};
+    const query: Record<string, any> = {};
     for (const method of ['select', 'insert', 'update', 'delete', 'eq']) {
       query[method] = (...args: unknown[]) => { calls.push({ table, method, args }); return query; };
     }
     query.single = vi.fn(async () => ({ data: options.singles?.[table] ?? { id: 7 }, error: null }));
     query.maybeSingle = vi.fn(async () => ({ data: options.singles?.[table] ?? { id: 7 }, error: null }));
-    query.then = (resolve: (value: unknown) => unknown) =>
-      Promise.resolve({ data: options.lists?.[table] ?? [], error: null }).then(resolve);
+    query.then = (resolve: (value: { data: unknown[]; error: null }) => unknown, reject?: (reason: unknown) => unknown) =>
+      Promise.resolve({ data: options.lists?.[table] ?? [], error: null }).then(resolve, reject);
     return query;
   });
   return { client: { from } as unknown as SupabaseClient, calls, from };
