@@ -6112,20 +6112,6 @@ button:disabled {
   font-weight: 750;
 }
 .sp-centre-banner-error { color: #fecdd3; overflow-wrap: anywhere; }
-.sp-modal .management-editor-heading h2::before,
-.sp-modal .management-editor > h2::before {
-  display: inline-grid;
-  width: 30px;
-  height: 30px;
-  margin-right: 9px;
-  place-items: center;
-  border-radius: 10px;
-  background: color-mix(in srgb, var(--lang) 14%, var(--card));
-  color: var(--lang);
-  content: '✦';
-  font-size: .95rem;
-  vertical-align: 2px;
-}
 @media (max-width: 1100px) {
   .sp-centre-banner { flex-basis: 340px; }
   .sp-centre-switcher { min-width: 135px; max-width: 170px; }
@@ -6148,30 +6134,63 @@ button:disabled {
 }
 
 
-/* Field icon labels for student, teacher, formation and group dialogs */
-.sp-modal .sp-field-label {
-  display: inline-flex;
-  min-height: 22px;
-  align-items: center;
-  gap: 9px;
+
+
+
+/* SchoolPlans — formulaire modal unifié, sobre et responsive (Tailwind-inspired) */
+.sp-modal {
+  width: min(100%, 720px);
+  max-height: min(88dvh, 900px);
+  overflow-y: auto;
+  padding: 30px;
+  border: 1px solid color-mix(in srgb, var(--line) 88%, transparent);
+  border-radius: 20px;
+  background: var(--card);
   color: var(--ink);
-  font-size: .84rem;
-  font-weight: 750;
-  line-height: 1.35;
+  box-shadow: 0 24px 80px rgb(15 23 42 / 22%);
+  scrollbar-gutter: stable;
 }
-.sp-modal .sp-field-label > span:first-child {
-  display: inline-grid;
-  width: 27px;
-  height: 27px;
-  flex: 0 0 27px;
-  place-items: center;
-  border: 1px solid color-mix(in srgb, var(--brand) 17%, var(--line));
-  border-radius: 9px;
-  background: color-mix(in srgb, var(--brand) 8%, var(--card));
-  color: var(--brand);
-  font-size: 1rem;
-  font-weight: 800;
-  line-height: 1;
+.sp-modal .management-editor {
+  display: block;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+}
+.sp-modal .management-editor > h2 {
+  margin: 0 0 24px;
+  padding-bottom: 18px;
+  border-bottom: 1px solid var(--line);
+  color: var(--ink);
+  font-size: 1.45rem;
+  font-weight: 750;
+  letter-spacing: -0.035em;
+  line-height: 1.25;
+}
+.sp-modal .management-editor-heading {
+  align-items: flex-start;
+  margin-bottom: 24px;
+  padding-bottom: 18px;
+  border-bottom: 1px solid var(--line);
+}
+.sp-modal .management-editor-heading h2 {
+  margin: 0 0 7px;
+  font-size: 1.45rem;
+  font-weight: 750;
+  letter-spacing: -0.035em;
+  line-height: 1.25;
+}
+.sp-modal .management-editor-heading p {
+  color: var(--mute);
+  font-size: .9rem;
+  line-height: 1.55;
+}
+.sp-modal .sp-form-grid,
+.sp-modal .management-editor-form {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  align-items: start;
+  gap: 20px 18px;
 }
 .sp-modal .sp-form-field {
   display: flex;
@@ -6179,43 +6198,114 @@ button:disabled {
   flex-direction: column;
   align-items: stretch;
   gap: 8px;
+  color: var(--ink);
+  font-size: .875rem;
+  font-weight: 600;
+  line-height: 1.4;
 }
-.sp-modal .management-editor-form,
-.sp-modal .sp-form-grid {
-  align-items: start;
+.sp-modal .sp-field-label {
+  display: block;
+  color: var(--ink);
+  font-size: .875rem;
+  font-weight: 600;
+  line-height: 1.4;
 }
-.sp-modal .sp-field {
+.sp-modal .sp-field,
+.sp-modal select.sp-field,
+.sp-modal textarea.sp-field {
   width: 100%;
   min-width: 0;
+  min-height: 46px;
+  padding: 11px 13px;
+  border: 1px solid #d7deea;
+  border-radius: 10px;
+  background: var(--card);
   color: var(--ink);
-  background-color: var(--bg);
+  font: inherit;
+  font-size: .925rem;
+  box-shadow: 0 1px 2px rgb(15 23 42 / 3%);
+  transition: border-color 150ms ease, box-shadow 150ms ease, background-color 150ms ease;
 }
 .sp-modal .sp-field::placeholder {
-  color: var(--mute);
-  opacity: .78;
+  color: #94a3b8;
+  opacity: 1;
 }
-.sp-modal .management-editor-form .management-muted.management-editor-wide {
+.sp-modal .sp-field:hover {
+  border-color: #aab7ca;
+}
+.sp-modal .sp-field:focus,
+.sp-modal .sp-field:focus-visible {
+  border-color: #2563eb;
+  outline: none;
+  box-shadow: 0 0 0 3px rgb(37 99 235 / 15%);
+}
+.sp-modal textarea.sp-field {
+  min-height: 112px;
+  resize: vertical;
+}
+.sp-modal .management-editor-wide {
+  grid-column: 1 / -1;
+}
+.sp-modal .management-muted.management-editor-wide {
+  margin: 0;
   padding: 12px 14px;
   border: 1px solid var(--line);
-  border-radius: 13px;
-  background: color-mix(in srgb, var(--brand) 4%, var(--card));
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--bg) 58%, var(--card));
+  color: var(--mute);
+  font-size: .85rem;
   line-height: 1.55;
 }
-.sp-modal .management-module-picker-heading strong {
-  display: inline-flex;
+.sp-modal .management-toolbar {
+  display: flex;
+  grid-column: 1 / -1;
+  justify-content: flex-end;
   align-items: center;
-  gap: 8px;
+  gap: 10px;
+  margin-top: 4px;
+  padding: 18px 0 0;
+  border: 0;
+  border-top: 1px solid var(--line);
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
 }
-.sp-modal .management-module-picker-heading strong > span {
-  display: inline-grid;
-  width: 27px;
-  height: 27px;
-  place-items: center;
-  border-radius: 9px;
-  background: color-mix(in srgb, var(--brand) 8%, var(--card));
-  color: var(--brand);
+.sp-modal .sp-btn {
+  min-height: 42px;
+  padding: 10px 17px;
+  border-radius: 10px;
+  font-size: .9rem;
+  font-weight: 650;
+  transition: background-color 150ms ease, border-color 150ms ease, box-shadow 150ms ease;
+}
+.sp-modal .sp-btn:not(:disabled):hover {
+  transform: none;
+  box-shadow: 0 2px 5px rgb(15 23 42 / 8%);
 }
 @media (max-width: 640px) {
-  .sp-modal .sp-field-label { font-size: .82rem; }
-  .sp-modal .sp-field-label > span:first-child { width: 25px; height: 25px; flex-basis: 25px; }
+  .sp-modal {
+    width: 100%;
+    max-height: 94dvh;
+    padding: 24px 18px calc(20px + env(safe-area-inset-bottom));
+    border-radius: 18px 18px 0 0;
+  }
+  .sp-modal .sp-form-grid,
+  .sp-modal .management-editor-form {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 17px;
+  }
+  .sp-modal .management-editor-wide,
+  .sp-modal .management-toolbar {
+    grid-column: auto;
+  }
+  .sp-modal .management-toolbar {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    padding-top: 16px;
+  }
+}
+@media (max-width: 380px) {
+  .sp-modal .management-toolbar {
+    grid-template-columns: 1fr;
+  }
 }
