@@ -7,7 +7,7 @@ import {
 import { getCentreStudents } from '../../data/repositories/managementRepository';
 import { getSupabaseClient } from '../../data/supabase/client';
 import type { ManagedStudent } from '../../types/management';
-import { Alert, Button, EmptyState, LoadingState, PageHeader, Panel } from '../../components/ui';
+import { Alert, Button, EmptyState, LoadingState, PageHeader, Panel, notify } from '../../components/ui';
 import { useAuth } from '../auth/AuthProvider';
 
 type PageState =
@@ -131,7 +131,11 @@ export function CertificatesPage() {
   const [state, setState] = useState<PageState>({ status: 'loading' });
   const [reload, setReload] = useState(0);
   const [busy, setBusy] = useState(false);
-  const [message, setMessage] = useState<{ tone: 'success' | 'error'; text: string } | null>(null);
+  const [message, setMessageState] = useState<{ tone: 'success' | 'error'; text: string } | null>(null);
+  const setMessage = (value: { tone: 'success' | 'error'; text: string } | null) => {
+    setMessageState(value);
+    if (value) notify(value.text, value.tone === 'error' ? 'error' : 'success');
+  };
   const [studentId, setStudentId] = useState('');
   const [module, setModule] = useState('');
   const [startsOn, setStartsOn] = useState('');
