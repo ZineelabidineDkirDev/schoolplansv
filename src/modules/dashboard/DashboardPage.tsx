@@ -881,6 +881,64 @@ export function DashboardPage() {
           <h2>Répartition par domaine</h2>
           <DomainDistribution values={metrics.domainDistribution} />
         </Panel>
+
+      <div className="dashboard-insights-grid">
+        <Panel className="dashboard-insight-panel">
+          <div className="dashboard-insight-heading">
+            <span className="dashboard-insight-icon is-green">↗</span>
+            <div><h2>Présences et absences</h2><p>Répartition des statuts enregistrés</p></div>
+          </div>
+          {(() => {
+            const statuses = [
+              { label: 'Présent', value: data.presences.filter((item) => ['present', 'présent'].includes(item.status.toLowerCase())).length, color: 'is-green' },
+              { label: 'Retard', value: data.presences.filter((item) => item.status.toLowerCase() === 'retard').length, color: 'is-amber' },
+              { label: 'Absent', value: data.presences.filter((item) => ['absent', 'absence'].includes(item.status.toLowerCase())).length, color: 'is-rose' },
+            ];
+            const total = statuses.reduce((sum, item) => sum + item.value, 0);
+            return total ? <div className="dashboard-insight-bars">{statuses.map((item) => <div className="dashboard-insight-bar-row" key={item.label}><div><span>{item.label}</span><strong>{item.value}</strong></div><div className="dashboard-insight-track"><span className={item.color} style={{ width: `${Math.round(item.value / total * 100)}%` }} /></div></div>)}</div> : <p className="dashboard-insight-empty">Les graphiques apparaîtront dès que des présences seront enregistrées.</p>;
+          })()}
+        </Panel>
+        <Panel className="dashboard-insight-panel">
+          <div className="dashboard-insight-heading">
+            <span className="dashboard-insight-icon is-blue">◫</span>
+            <div><h2>Charge des formateurs</h2><p>Nombre de cours par formateur</p></div>
+          </div>
+          {(() => {
+            const counts = data.teachers.map((teacher) => ({ name: teacher.name, count: data.courses.filter((course) => String(course.teacherId) === String(teacher.id)).length })).sort((a,b) => b.count-a.count).slice(0,5);
+            const max = Math.max(1, ...counts.map((item) => item.count));
+            return counts.length ? <div className="dashboard-insight-bars">{counts.map((item) => <div className="dashboard-insight-bar-row" key={item.name}><div><span title={item.name}>{item.name}</span><strong>{item.count}</strong></div><div className="dashboard-insight-track"><span className="is-blue" style={{ width: `${Math.round(item.count / max * 100)}%` }} /></div></div>)}</div> : <p className="dashboard-insight-empty">Aucun formateur disponible pour cette vue.</p>;
+          })()}
+        </Panel>
+        <Panel className="dashboard-insight-panel">
+          <div className="dashboard-insight-heading">
+            <span className="dashboard-insight-icon is-violet">▦</span>
+            <div><h2>Utilisation des salles</h2><p>Répartition des cours par salle renseignée</p></div>
+          </div>
+          {(() => {
+            const counts = new Map<string, number>();
+            data.courses.forEach((course) => { if (course.roomName) counts.set(course.roomName, (counts.get(course.roomName) ?? 0) + 1); });
+            const values = [...counts].map(([name, count]) => ({ name, count })).sort((a,b) => b.count-a.count).slice(0,5);
+            const max = Math.max(1, ...values.map((item) => item.count));
+            return values.length ? <div className="dashboard-insight-bars">{values.map((item) => <div className="dashboard-insight-bar-row" key={item.name}><div><span title={item.name}>{item.name}</span><strong>{item.count}</strong></div><div className="dashboard-insight-track"><span className="is-violet" style={{ width: `${Math.round(item.count / max * 100)}%` }} /></div></div>)}</div> : <p className="dashboard-insight-empty">Renseignez les salles dans les cours pour alimenter ce graphique.</p>;
+          })()}
+        </Panel>
+        <Panel className="dashboard-insight-panel dashboard-insight-future">
+          <div className="dashboard-insight-heading">
+            <span className="dashboard-insight-icon is-green">◉</span>
+            <div><h2>Paiements et recettes</h2><p>Analyse financière du centre</p></div>
+          </div>
+          <div className="dashboard-future-visual" aria-hidden="true"><div className="dashboard-future-donut"><span>DH</span></div><div className="dashboard-future-legend"><i /><i /><i /></div></div>
+          <p className="dashboard-insight-empty">Graphiques prêts à être connectés aux données de paiement : recettes mensuelles, montants dus et paiements en attente. Aucun montant fictif n’est affiché.</p>
+        </Panel>
+        <Panel className="dashboard-insight-panel dashboard-insight-future">
+          <div className="dashboard-insight-heading">
+            <span className="dashboard-insight-icon is-amber">⌖</span>
+            <div><h2>Carte des centres par région</h2><p>Répartition géographique au Maroc</p></div>
+          </div>
+          <div className="dashboard-map-preview" aria-hidden="true"><div className="dashboard-map-grid" /><span className="map-pin pin-one">●</span><span className="map-pin pin-two">●</span><span className="map-pin pin-three">●</span><span className="map-pin pin-four">●</span><div className="dashboard-map-label">Carte à connecter</div></div>
+          <p className="dashboard-insight-empty">Pour placer les centres sur une vraie carte, il faut récupérer leurs villes ou coordonnées et respecter les droits d’accès. Les marqueurs ci-dessus sont décoratifs et ne représentent pas des centres réels.</p>
+        </Panel>
+      </div>
       </div>
     </section>
   );
