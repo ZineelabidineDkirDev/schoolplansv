@@ -6146,3 +6146,76 @@ button:disabled {
   .sp-centre-switcher { min-width: 100%; max-width: none; padding: 9px 0 0; border-top: 1px solid rgb(255 255 255 / 14%); border-left: 0; }
   .sp-centre-banner { flex-wrap: wrap; }
 }
+
+
+/* Field icon labels for student, teacher, formation and group dialogs */
+.sp-modal .sp-field-label {
+  display: inline-flex;
+  min-height: 22px;
+  align-items: center;
+  gap: 9px;
+  color: var(--ink);
+  font-size: .84rem;
+  font-weight: 750;
+  line-height: 1.35;
+}
+.sp-modal .sp-field-label > span:first-child {
+  display: inline-grid;
+  width: 27px;
+  height: 27px;
+  flex: 0 0 27px;
+  place-items: center;
+  border: 1px solid color-mix(in srgb, var(--brand) 17%, var(--line));
+  border-radius: 9px;
+  background: color-mix(in srgb, var(--brand) 8%, var(--card));
+  color: var(--brand);
+  font-size: 1rem;
+  font-weight: 800;
+  line-height: 1;
+}
+.sp-modal .sp-form-field {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 8px;
+}
+.sp-modal .management-editor-form,
+.sp-modal .sp-form-grid {
+  align-items: start;
+}
+.sp-modal .sp-field {
+  width: 100%;
+  min-width: 0;
+  color: var(--ink);
+  background-color: var(--bg);
+}
+.sp-modal .sp-field::placeholder {
+  color: var(--mute);
+  opacity: .78;
+}
+.sp-modal .management-editor-form .management-muted.management-editor-wide {
+  padding: 12px 14px;
+  border: 1px solid var(--line);
+  border-radius: 13px;
+  background: color-mix(in srgb, var(--brand) 4%, var(--card));
+  line-height: 1.55;
+}
+.sp-modal .management-module-picker-heading strong {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+.sp-modal .management-module-picker-heading strong > span {
+  display: inline-grid;
+  width: 27px;
+  height: 27px;
+  place-items: center;
+  border-radius: 9px;
+  background: color-mix(in srgb, var(--brand) 8%, var(--card));
+  color: var(--brand);
+}
+@media (max-width: 640px) {
+  .sp-modal .sp-field-label { font-size: .82rem; }
+  .sp-modal .sp-field-label > span:first-child { width: 25px; height: 25px; flex-basis: 25px; }
+}
