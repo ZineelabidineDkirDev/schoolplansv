@@ -255,6 +255,7 @@ function ApplicationShell() {
               </div>
             )}
           </div>
+        )}
         <div aria-label="Utilisateur connecté" className="sp-user">
           <strong>{profile.fullName || session?.user.email}</strong>
           <small>{getRoleLabel(profile.role)}</small>
