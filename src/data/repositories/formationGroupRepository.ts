@@ -304,3 +304,52 @@ export async function deleteGroup(
     .eq('centre_id', centreId);
   if (error) throw error;
 }
+
+
+export async function updateGroup(
+  client: SupabaseClient,
+  centreIdValue: string,
+  groupId: StudentIdentifier,
+  input: GroupInput,
+): Promise<void> {
+  const centreId = requireCentre(centreIdValue);
+  const name = input.name.trim();
+  if (!name || name.length > 100) {
+    throw new Error('Le nom du groupe est obligatoire (100 caractères maximum).');
+  }
+  if (!Number.isInteger(input.capacity) || input.capacity < 1 || input.capacity > 500) {
+    throw new Error('La capacité doit être comprise entre 1 et 500 étudiants.');
+  }
+  if (!input.formationId) throw new Error('Veuillez sélectionner une formation.');
+
+  const { data: formation, error: formationError } = await client
+    .from('formations')
+    .select('duree')
+    .eq('id', input.formationId)
+    .eq('centre_id', centreId)
+    .eq('actif', true)
+    .maybeSingle();
+  if (formationError) throw formationError;
+  if (!formation) throw new Error('Sélectionnez une formation active de ce centre.');
+
+  const endDate = calculateGroupEndDate(
+    input.startsOn,
+    (formation as { duree: string | null }).duree ?? '',
+  );
+  const { data, error } = await client
+    .from('groupes')
+    .update({
+      nom: name,
+      formation_id: input.formationId,
+      formateur_id: input.teacherId,
+      date_debut: input.startsOn,
+      date_fin: endDate,
+      capacite: input.capacity,
+    })
+    .eq('id', groupId)
+    .eq('centre_id', centreId)
+    .select('id')
+    .maybeSingle();
+  if (error) throw error;
+  if (!data) throw new Error('Groupe introuvable dans ce centre.');
+}

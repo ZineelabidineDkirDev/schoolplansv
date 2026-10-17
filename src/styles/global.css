@@ -5524,3 +5524,177 @@ button:disabled {
     gap: 8px;
   }
 }
+
+
+/* Modern, accessible modal layer used by every CRUD editor. */
+.sp-modal-backdrop {
+  position: fixed;
+  z-index: 1000;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  overflow-y: auto;
+  padding: max(18px, env(safe-area-inset-top)) 18px max(18px, env(safe-area-inset-bottom));
+  background: rgb(5 15 36 / 62%);
+  backdrop-filter: blur(7px);
+  animation: sp-modal-fade-in 160ms ease-out;
+}
+
+.sp-modal {
+  position: relative;
+  width: min(100%, 980px);
+  max-height: min(90dvh, 1000px);
+  overflow-y: auto;
+  padding: clamp(18px, 3vw, 30px);
+  border: 1px solid color-mix(in srgb, var(--line) 80%, white);
+  border-radius: 24px;
+  background: var(--bg);
+  box-shadow: 0 28px 90px rgb(0 0 0 / 30%);
+  animation: sp-modal-rise-in 180ms ease-out;
+}
+
+.sp-modal > .sp-panel {
+  border: 0;
+  padding: 0;
+  box-shadow: none;
+  background: transparent;
+}
+
+.sp-modal-close {
+  position: sticky;
+  z-index: 2;
+  top: 0;
+  float: right;
+  display: grid;
+  width: 38px;
+  height: 38px;
+  margin: -8px -8px 0 12px;
+  place-items: center;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--card);
+  color: var(--ink);
+  font-size: 1.6rem;
+  line-height: 1;
+  cursor: pointer;
+  box-shadow: var(--sh);
+}
+
+.sp-modal-close:hover {
+  border-color: var(--lang);
+  color: var(--lang);
+}
+
+.sp-modal .management-editor,
+.sp-modal .management-editor-form {
+  min-width: 0;
+}
+
+.sp-modal .management-editor-heading {
+  padding-right: 38px;
+}
+
+@keyframes sp-modal-fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes sp-modal-rise-in {
+  from { opacity: 0; transform: translateY(10px) scale(.99); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+@media (max-width: 640px) {
+  .sp-modal-backdrop { align-items: end; padding: 8px; }
+  .sp-modal {
+    width: 100%;
+    max-height: 94dvh;
+    padding: 18px;
+    border-radius: 22px 22px 14px 14px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .sp-modal-backdrop, .sp-modal { animation: none; }
+}
+
+
+/* Centre identity and subscription overview */
+.centre-table-identity {
+  display: flex;
+  min-width: 190px;
+  align-items: center;
+  gap: 12px;
+}
+.centre-table-logo,
+.centre-logo-preview {
+  display: grid;
+  flex: 0 0 auto;
+  width: 48px;
+  height: 48px;
+  place-items: center;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 15px;
+  background: linear-gradient(145deg, color-mix(in srgb, var(--lang) 12%, var(--card)), var(--card));
+  color: var(--brand);
+  font-size: 1.35rem;
+}
+.centre-table-logo img,
+.centre-logo-preview img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  background: white;
+}
+.centre-pack-badge {
+  display: inline-flex;
+  align-items: center;
+  border: 1px solid color-mix(in srgb, var(--data) 22%, var(--line));
+  border-radius: 999px;
+  padding: 5px 10px;
+  background: color-mix(in srgb, var(--data) 8%, var(--card));
+  color: var(--data);
+  font-size: .72rem;
+  font-weight: 850;
+  letter-spacing: .035em;
+  white-space: nowrap;
+}
+.centre-expiry {
+  display: inline-flex;
+  align-items: center;
+  border-radius: 999px;
+  padding: 5px 9px;
+  background: color-mix(in srgb, var(--lang) 10%, var(--card));
+  color: var(--lang);
+  font-size: .76rem;
+  font-weight: 750;
+  white-space: nowrap;
+}
+.centre-expiry.is-soon {
+  background: color-mix(in srgb, #d97706 12%, var(--card));
+  color: #b45309;
+}
+.centre-expiry.is-expired {
+  background: color-mix(in srgb, #dc2626 10%, var(--card));
+  color: #dc2626;
+}
+.centre-logo-editor {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 16px;
+  border: 1px solid var(--line);
+  border-radius: 18px;
+  background: color-mix(in srgb, var(--lang) 4%, var(--card));
+}
+.centre-logo-preview {
+  width: 76px;
+  height: 76px;
+  border-radius: 20px;
+  font-size: 1.8rem;
+}
+@media (max-width: 720px) {
+  .centre-logo-editor { align-items: flex-start; }
+  .centre-table-identity { min-width: 0; }
+}

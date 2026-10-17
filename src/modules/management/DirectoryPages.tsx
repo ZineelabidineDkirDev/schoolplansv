@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState, type FormEvent, type ReactNode } from 'react';
-import { Alert, Button, EmptyState, LoadingState, PageHeader, Panel } from '../../components/ui';
+import { Alert, Button, EmptyState, LoadingState, Modal, PageHeader, Panel } from '../../components/ui';
 import { getWeekOccurrences } from '../../business/planning/planningSchedule';
 import { getPlanningData } from '../../data/repositories/planningRepository';
 import {
@@ -10,6 +10,7 @@ import {
   deleteGroup,
   getFormationGroupData,
   saveFormation,
+  updateGroup,
   type FormationInput,
   type ModuleDomain,
   type ModuleOption,
@@ -190,7 +191,7 @@ export function RoomsPage() {
     <PageFrame actions={canManage ? <Button onClick={() => openForm()} type="button">+ Ajouter une salle</Button> : undefined}
       description="Salles du centre et volume d’occupation hebdomadaire selon les séances planifiées." title="Salles">
       {error && <Alert tone="error"><p>{error}</p></Alert>}{message && <Alert tone="success"><p>{message}</p></Alert>}
-      {formOpen && canManage && <Panel className="management-editor">
+      {formOpen && canManage && <Modal label={editingId === null ? 'Nouvelle salle' : 'Modifier la salle'} onClose={() => setFormOpen(false)}><Panel className="management-editor">
         <h2>{editingId === null ? 'Nouvelle salle' : 'Modifier la salle'}</h2>
         <form className="sp-form-grid" onSubmit={(event) => void saveRoom(event)}>
           <label className="sp-form-field">Nom<input className="sp-field" required value={form.name} onChange={(event) => setForm((v) => ({ ...v, name: event.target.value }))} /></label>
@@ -198,7 +199,7 @@ export function RoomsPage() {
           <label className="sp-form-field">Capacité<input className="sp-field" min="1" type="number" value={form.capacity ?? ''} onChange={(event) => setForm((v) => ({ ...v, capacity: event.target.value ? Number(event.target.value) : null }))} /></label>
           <div className="management-toolbar"><Button disabled={saving} type="submit">{saving ? 'Enregistrement…' : 'Enregistrer'}</Button><Button onClick={() => setFormOpen(false)} type="button" variant="secondary">Annuler</Button></div>
         </form>
-      </Panel>}
+      </Panel></Modal>}
       <PlanningLoadState retry={reload} state={state} />
       {state.status === 'loaded' && (state.data.filters.rooms.length === 0 ? <EmptyState title="Aucune salle n’est enregistrée dans ce centre." /> :
         <div className="management-card-grid">{state.data.filters.rooms.map((room) => {
@@ -259,13 +260,13 @@ export function TeachersPage() {
   return <PageFrame actions={canManage ? <Button onClick={() => openForm()} type="button">+ Ajouter un formateur</Button> : undefined}
     description="Équipe pédagogique, matières enseignées et séances attribuées dans le centre." title="Formateurs">
     {error && <Alert tone="error"><p>{error}</p></Alert>}{message && <Alert tone="success"><p>{message}</p></Alert>}
-    {formOpen && canManage && <Panel className="management-editor"><h2>{editingId === null ? 'Nouveau formateur' : 'Modifier le formateur'}</h2>
+    {formOpen && canManage && <Modal label={editingId === null ? 'Nouveau formateur' : 'Modifier le formateur'} onClose={() => setFormOpen(false)}><Panel className="management-editor"><h2>{editingId === null ? 'Nouveau formateur' : 'Modifier le formateur'}</h2>
       <form className="sp-form-grid" onSubmit={(event) => void saveTeacher(event)}>
         <label className="sp-form-field">Nom complet<input className="sp-field" required value={form.name} onChange={(event) => setForm((v) => ({ ...v, name: event.target.value }))} /></label>
         <label className="sp-form-field">E-mail<input className="sp-field" type="email" value={form.email} onChange={(event) => setForm((v) => ({ ...v, email: event.target.value }))} /></label>
         <p className="management-muted">Le compte de connexion et les matières associées ne sont pas modifiés par ce formulaire.</p>
         <div className="management-toolbar"><Button disabled={saving} type="submit">{saving ? 'Enregistrement…' : 'Enregistrer'}</Button><Button onClick={() => setFormOpen(false)} type="button" variant="secondary">Annuler</Button></div>
-      </form></Panel>}
+      </form></Panel></Modal>}
     <PlanningLoadState retry={reload} state={state} />
     {state.status === 'loaded' && (state.data.filters.teachers.length === 0 ? <EmptyState title="Aucun formateur n’est enregistré dans ce centre." /> :
       <div className="management-card-grid management-four-column-grid">{state.data.filters.teachers.map((teacher) => {
@@ -306,7 +307,7 @@ export function FormationGroupsPage() {
     description: '',
     moduleIds: [],
   });
-  const [groupForm, setGroupForm] = useState({
+  const [groupForm, setGroupForm] = useState<{ id?: string | number; name: string; formationId: string; teacherId: string; startsOn: string; capacity: number }>({
     name: '',
     formationId: '',
     teacherId: '',
@@ -440,15 +441,19 @@ export function FormationGroupsPage() {
     }
   }
 
-  function startGroupForm(formationId = selectedFormationId) {
+  function startGroupForm(
+    formationId = selectedFormationId,
+    group?: PlanningData['filters']['groups'][number],
+  ) {
     setError(null);
     setMessage(null);
     setGroupForm({
-      name: '',
-      formationId,
-      teacherId: '',
-      startsOn: isoDate(new Date()),
-      capacity: 30,
+      ...(group ? { id: group.id } : {}),
+      name: group?.name ?? '',
+      formationId: String(group?.formationId ?? formationId),
+      teacherId: group?.teacherId == null ? '' : String(group.teacherId),
+      startsOn: group?.startsOn ?? isoDate(new Date()),
+      capacity: group?.capacity ?? 30,
     });
     setGroupFormOpen(true);
   }
@@ -460,15 +465,20 @@ export function FormationGroupsPage() {
     setError(null);
     setMessage(null);
     try {
-      await createGroup(getSupabaseClient(), profile.centreId, {
+      const input = {
         name: groupForm.name,
         formationId: groupForm.formationId,
         teacherId: groupForm.teacherId || null,
         startsOn: groupForm.startsOn,
         capacity: groupForm.capacity,
-      });
+      };
+      if (groupForm.id !== undefined) {
+        await updateGroup(getSupabaseClient(), profile.centreId, groupForm.id, input);
+      } else {
+        await createGroup(getSupabaseClient(), profile.centreId, input);
+      }
       setGroupFormOpen(false);
-      setMessage('Groupe enregistré avec succès.');
+      setMessage(groupForm.id !== undefined ? 'Groupe modifié avec succès.' : 'Groupe créé avec succès.');
       await refreshFormations();
     } catch (cause) {
       setError(errorMessage(cause));
@@ -536,6 +546,7 @@ export function FormationGroupsPage() {
       {error && <Alert tone="error">{error}</Alert>}
       {message && <Alert tone="success">{message}</Alert>}
       {formOpen && (
+        <Modal label={formationForm.id ? 'Modifier la formation' : 'Nouvelle formation'} onClose={() => setFormOpen(false)}>
         <Panel className="management-editor">
           <div className="management-editor-heading">
             <div>
@@ -696,13 +707,15 @@ export function FormationGroupsPage() {
             </div>
           </form>
         </Panel>
+        </Modal>
       )}
       {groupFormOpen && (
+        <Modal label="Nouveau groupe" onClose={() => setGroupFormOpen(false)}>
         <Panel className="management-editor">
           <div className="management-editor-heading">
             <div>
               <p className="planning-progress-eyebrow">Organisation des étudiants</p>
-              <h2>Nouveau groupe</h2>
+              <h2>{groupForm.id !== undefined ? 'Modifier le groupe' : 'Nouveau groupe'}</h2>
             </div>
             <button
               aria-label="Fermer le formulaire"
@@ -810,11 +823,12 @@ export function FormationGroupsPage() {
                 Annuler
               </Button>
               <Button disabled={saving} type="submit">
-                {saving ? 'Enregistrement…' : 'Enregistrer le groupe'}
+                {saving ? 'Enregistrement…' : groupForm.id !== undefined ? 'Enregistrer les modifications' : 'Créer le groupe'}
               </Button>
             </div>
           </form>
         </Panel>
+        </Modal>
       )}
       {state.status === 'loaded' && (
         <>
@@ -1003,6 +1017,13 @@ export function FormationGroupsPage() {
                         </div>
                         {canManage && (
                           <div className="management-card-actions">
+                            <Button
+                              onClick={() => startGroupForm(String(group.formationId), group)}
+                              type="button"
+                              variant="secondary"
+                            >
+                              Modifier
+                            </Button>
                             <Button
                               onClick={() => void handleDeleteGroup(group.id)}
                               type="button"
@@ -1199,6 +1220,7 @@ export function StudentsPage() {
       {error && <Alert tone="error"><p>{error}</p></Alert>}
       {message && <Alert tone="success"><p>{message}</p></Alert>}
       {formOpen && canManage && (
+        <Modal label={editingId === null ? 'Nouvel étudiant' : 'Modifier l’étudiant'} onClose={() => setFormOpen(false)}>
         <Panel className="management-editor">
           <header className="management-editor-heading">
             <div>
@@ -1227,6 +1249,7 @@ export function StudentsPage() {
             </div>
           </form>
         </Panel>
+        </Modal>
       )}
       <div className="management-toolbar">
         <label className="sp-form-field">

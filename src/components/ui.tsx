@@ -5,6 +5,7 @@ import type {
   PropsWithChildren,
   SelectHTMLAttributes,
 } from 'react';
+import { useEffect } from 'react';
 
 type ButtonVariant = 'primary' | 'secondary' | 'danger' | 'quiet';
 
@@ -148,6 +149,42 @@ export function EmptyState({ title, description }: { title: string; description?
     <div className="sp-empty">
       <p>{title}</p>
       {description && <p className="sp-muted">{description}</p>}
+    </div>
+  );
+}
+
+
+export function Modal({
+  children,
+  onClose,
+  label = 'Fenêtre de dialogue',
+}: PropsWithChildren<{ onClose: () => void; label?: string }>) {
+  useEffect(() => {
+    function handleKeyDown(event: KeyboardEvent) {
+      if (event.key === 'Escape') onClose();
+    }
+    document.addEventListener('keydown', handleKeyDown);
+    return () => document.removeEventListener('keydown', handleKeyDown);
+  }, [onClose]);
+
+  return (
+    <div
+      className="sp-modal-backdrop"
+      onMouseDown={(event) => {
+        if (event.target === event.currentTarget) onClose();
+      }}
+    >
+      <section aria-label={label} aria-modal="true" className="sp-modal" role="dialog">
+        <button
+          aria-label="Fermer la fenêtre"
+          className="sp-modal-close"
+          onClick={onClose}
+          type="button"
+        >
+          ×
+        </button>
+        {children}
+      </section>
     </div>
   );
 }

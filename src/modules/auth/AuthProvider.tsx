@@ -27,7 +27,6 @@ type AuthContextValue = {
   profile: AuthProfile | null;
   activeCentres: ActiveCentre[];
   activeCentreId: string;
-  setActiveCentreId: (centreId: string) => void;
   permissions: CentrePermissions;
   permissionErrors: string[];
   mustChangePassword: boolean;
@@ -201,12 +200,6 @@ export function AuthProvider({ children }: PropsWithChildren) {
     return clientRef.current;
   }, []);
 
-  const setActiveCentreId = useCallback((centreId: string) => {
-    if (!activeCentres.some((centre) => centre.id === centreId)) return;
-    window.localStorage.setItem('schoolplans_current_centre', centreId);
-    setActiveCentreIdState(centreId);
-  }, [activeCentres]);
-
   const signIn = useCallback(
     async (email: string, password: string) => {
       const { error: authError } = await requireClient().auth.signInWithPassword({
@@ -251,18 +244,22 @@ export function AuthProvider({ children }: PropsWithChildren) {
   }, [requireClient]);
 
   const setActiveCentreId = useCallback((centreId: string | null) => {
+    if (centreId && !activeCentres.some((centre) => centre.id === centreId)) return;
+
     if (centreId) {
       window.localStorage.setItem('schoolplans_current_centre', centreId);
     } else {
       window.localStorage.removeItem('schoolplans_current_centre');
     }
+
+    setActiveCentreIdState(centreId ?? '');
     setProfile((current) => {
       if (!current || current.role !== 'super_admin' || current.centreId === centreId) {
         return current;
       }
       return { ...current, centreId };
     });
-  }, []);
+  }, [activeCentres]);
 
   const changePassword = useCallback(
     async (password: string) => {
@@ -299,7 +296,6 @@ export function AuthProvider({ children }: PropsWithChildren) {
       signInWithGoogle,
       signOut,
       changePassword,
-      setActiveCentreId,
     }),
     [
       status,
@@ -317,7 +313,6 @@ export function AuthProvider({ children }: PropsWithChildren) {
       signInWithGoogle,
       signOut,
       changePassword,
-      setActiveCentreId,
     ],
   );
 

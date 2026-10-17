@@ -74,6 +74,7 @@ function ApplicationShell() {
     permissionErrors,
     error: authError,
     signOut,
+    activeCentreId,
     setActiveCentreId,
   } = useAuth();
   type CentreHeaderInfo = {
