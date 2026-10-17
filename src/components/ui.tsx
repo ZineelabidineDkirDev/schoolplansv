@@ -5,7 +5,7 @@ import type {
   PropsWithChildren,
   SelectHTMLAttributes,
 } from 'react';
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 
 type ButtonVariant = 'primary' | 'secondary' | 'danger' | 'quiet';
 
@@ -212,5 +212,133 @@ export function ThemeToggle() {
         <path d="M12 2v2m0 16v2M4.9 4.9l1.4 1.4m11.4 11.4 1.4 1.4M2 12h2m16 0h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4" />
       </svg>
     </button>
+  );
+}
+
+type ToastTone = 'success' | 'error' | 'info';
+
+type ToastRequest = {
+  id: number;
+  message: string;
+  tone: ToastTone;
+};
+
+type ConfirmRequest = {
+  title: string;
+  message: string;
+  confirmLabel: string;
+  resolve: (confirmed: boolean) => void;
+};
+
+let toastSequence = 0;
+
+/** Show a consistent application toast from any page or repository workflow. */
+export function notify(
+  message: string,
+  tone: ToastTone = 'success',
+) {
+  if (typeof window === 'undefined' || !message.trim()) return;
+  window.dispatchEvent(
+    new CustomEvent('schoolplans:toast', {
+      detail: { id: ++toastSequence, message, tone },
+    }),
+  );
+}
+
+/** Replace blocking browser confirm dialogs with the branded confirmation modal. */
+export function confirmAction(
+  message: string,
+  options: { title?: string; confirmLabel?: string } = {},
+): Promise<boolean> {
+  if (typeof window === 'undefined') return Promise.resolve(false);
+  return new Promise((resolve) => {
+    window.dispatchEvent(
+      new CustomEvent('schoolplans:confirm', {
+        detail: {
+          title: options.title ?? 'Confirmer la suppression',
+          message,
+          confirmLabel: options.confirmLabel ?? 'Supprimer',
+          resolve,
+        } satisfies ConfirmRequest,
+      }),
+    );
+  });
+}
+
+export function ToastViewport() {
+  const [toasts, setToasts] = useState<ToastRequest[]>([]);
+  const [confirmation, setConfirmation] = useState<ConfirmRequest | null>(null);
+
+  useEffect(() => {
+    const onToast = (event: Event) => {
+      const detail = (event as CustomEvent<ToastRequest>).detail;
+      if (!detail?.message) return;
+      setToasts((current) => [...current, detail].slice(-4));
+      window.setTimeout(() => {
+        setToasts((current) => current.filter((toast) => toast.id !== detail.id));
+      }, 4200);
+    };
+    const onConfirm = (event: Event) => {
+      const detail = (event as CustomEvent<ConfirmRequest>).detail;
+      if (detail) setConfirmation(detail);
+    };
+    window.addEventListener('schoolplans:toast', onToast);
+    window.addEventListener('schoolplans:confirm', onConfirm);
+    return () => {
+      window.removeEventListener('schoolplans:toast', onToast);
+      window.removeEventListener('schoolplans:confirm', onConfirm);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!confirmation) return;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        confirmation.resolve(false);
+        setConfirmation(null);
+      }
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [confirmation]);
+
+  function resolveConfirmation(confirmed: boolean) {
+    confirmation?.resolve(confirmed);
+    setConfirmation(null);
+  }
+
+  return (
+    <>
+      <div aria-live="polite" aria-relevant="additions removals" className="sp-toast-stack">
+        {toasts.map((toast) => (
+          <div className={`sp-toast is-${toast.tone}`} key={toast.id} role={toast.tone === 'error' ? 'alert' : 'status'}>
+            <span aria-hidden="true" className="sp-toast-icon">
+              {toast.tone === 'success' ? '✓' : toast.tone === 'error' ? '!' : 'i'}
+            </span>
+            <p>{toast.message}</p>
+            <button aria-label="Fermer la notification" onClick={() => setToasts((current) => current.filter((item) => item.id !== toast.id))} type="button">×</button>
+          </div>
+        ))}
+      </div>
+      {confirmation && (
+        <div
+          className="sp-modal-backdrop sp-confirm-backdrop"
+          onMouseDown={(event) => {
+            if (event.target === event.currentTarget) resolveConfirmation(false);
+          }}
+        >
+          <section aria-labelledby="sp-confirm-title" aria-modal="true" className="sp-modal sp-confirm-modal" role="alertdialog">
+            <div className="sp-confirm-symbol" aria-hidden="true">!</div>
+            <span className="sp-confirm-badge">Action sensible</span>
+            <h2 id="sp-confirm-title">{confirmation.title}</h2>
+            <p>{confirmation.message}</p>
+            <div className="sp-confirm-actions">
+              <Button onClick={() => resolveConfirmation(false)} type="button" variant="secondary">Annuler</Button>
+              <Button onClick={() => resolveConfirmation(true)} type="button" variant="danger">{confirmation.confirmLabel}</Button>
+            </div>
+          </section>
+        </div>
+      )}
+    </>
   );
 }
