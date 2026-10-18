@@ -221,7 +221,7 @@ begin
   if tg_op = 'DELETE' then return old; end if;
   return new;
 end;
-$;
+$$;
 
 create or replace function public.finance_reverse_teacher_payroll_payment(
   p_payroll_id uuid,
@@ -308,7 +308,7 @@ begin
     raise exception 'La rémunération a changé de statut pendant l’annulation.';
   end if;
 end;
-$;
+$$;
 
 -- Session completion workflow: trainers submit; only the director validates.
 alter table public.seances_realisees
