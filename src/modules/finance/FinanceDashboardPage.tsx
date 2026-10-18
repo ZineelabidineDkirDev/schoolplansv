@@ -10,10 +10,11 @@ type TeacherAdvance = { id: string; teacher_id: number; amount: number | string;
 type AdvanceRepayment = { teacher_id: number; payroll_id: string; amount: number | string; status: string };
 type FinanceAccount = { id: string; name: string; account_type: 'cash' | 'bank'; active: boolean };
 type PlannedSession = { cours_id: number | string; date: string; validation_status: string; planned_minutes?: number | string | null };
+type PayrollSessionLine = { course_id: string; session_date: string; planned_minutes: number; compensation_mode: 'hourly' | 'session'; rate_effective_from: string; applied_rate: number; gross_amount: number };
 type CourseTime = { id: number | string; debut: string; fin: string };
 type Charge = { id: string; student_id: number; label: string; amount_due: number | string; due_date: string | null; status: string; notes: string | null };
 type Payment = { id: string; charge_id: string; amount: number | string; payment_method: string; receipt_number: string; paid_at: string; reference?: string | null; notes?: string | null };
-type Payroll = { id: string; teacher_id: number; period_start: string; period_end: string; hours: number | string; hourly_rate: number | string; compensation_mode?: string; session_count?: number | string; session_rate?: number | string; monthly_salary?: number | string; gross_amount?: number | string; advance_deduction?: number | string; amount_due: number | string; status: string; paid_at: string | null; notes: string | null; payment_method?: string | null; payment_reference?: string | null; cancellation_reason?: string | null; payment_reversed_at?: string | null; payment_reversal_reason?: string | null };
+type Payroll = { id: string; teacher_id: number; period_start: string; period_end: string; hours: number | string; hourly_rate: number | string; compensation_mode?: string; session_count?: number | string; session_rate?: number | string; monthly_salary?: number | string; gross_amount?: number | string; advance_deduction?: number | string; amount_due: number | string; status: string; paid_at: string | null; notes: string | null; payment_method?: string | null; payment_reference?: string | null; cancellation_reason?: string | null; payment_reversed_at?: string | null; payment_reversal_reason?: string | null; session_breakdown?: PayrollSessionLine[] | null };
 type TeacherRate = { id: string; teacher_id: number; compensation_mode: string; hourly_rate: number | string; session_rate: number | string; monthly_salary: number | string; effective_from: string; notes: string | null };
 type PayrollAdjustment = { id: string; teacher_id: number; source_payroll_id: string | null; source_session_id: string | null; adjustment_type: 'late_session' | 'exceptional_payment' | 'correction' | 'reversal'; amount: number | string; reason: string; status: 'pending' | 'approved' | 'paid' | 'cancelled'; payment_method: string | null; payment_reference: string | null; paid_at: string | null };
 type Summary = { charges: number; collected: number; expenses: number; payrollDue: number; chargeCount: number; expenseCount: number; payrollCount: number };
@@ -61,7 +62,7 @@ export function FinanceDashboardPage() {
   const [teacherRates, setTeacherRates] = useState<TeacherRate[]>([]);
   const [adjustments, setAdjustments] = useState<PayrollAdjustment[]>([]);
   const [financeAccounts, setFinanceAccounts] = useState<FinanceAccount[]>([]);
-  const [validatedSessionStats, setValidatedSessionStats] = useState({ count: 0, hours: 0, gross: 0, loading: false, missingRateCount: 0, modeMismatchCount: 0, rateSummary: [] as string[] });
+  const [validatedSessionStats, setValidatedSessionStats] = useState({ count: 0, hours: 0, gross: 0, loading: false, missingRateCount: 0, modeMismatchCount: 0, rateSummary: [] as string[], breakdown: [] as PayrollSessionLine[] });
   const [trainerEstimate, setTrainerEstimate] = useState({ loading: false, mode: '', hours: 0, count: 0, amount: 0, complete: true, message: '', rateSummary: [] as string[] });
   const [payrollPaymentForm, setPayrollPaymentForm] = useState({ payrollId: '', amount: '', paidAt: today(), method: 'cash', reference: '', accountId: '' });
   const [rateForm, setRateForm] = useState({ teacherId: '', compensationMode: 'hourly', hourlyRate: '', sessionRate: '', monthlySalary: '', effectiveFrom: today(), notes: '' });
@@ -96,7 +97,7 @@ export function FinanceDashboardPage() {
           client.from('finance_student_charges').select('id,student_id,label,amount_due,due_date,status,notes').eq('centre_id', profile.centreId).neq('status', 'cancelled').order('created_at', { ascending: false }),
           client.from('finance_payments').select('id,charge_id,amount,payment_method,receipt_number,paid_at,reference,notes').eq('centre_id', profile.centreId).order('paid_at', { ascending: false }),
           client.from('finance_expenses').select('amount').eq('centre_id', profile.centreId).eq('status', 'paid'),
-          client.from('finance_teacher_payroll').select('id,teacher_id,period_start,period_end,hours,hourly_rate,compensation_mode,session_count,session_rate,monthly_salary,gross_amount,advance_deduction,amount_due,status,paid_at,notes,payment_method,payment_reference,cancellation_reason,payment_reversed_at,payment_reversal_reason').eq('centre_id', profile.centreId).order('period_start', { ascending: false }),
+          client.from('finance_teacher_payroll').select('id,teacher_id,period_start,period_end,hours,hourly_rate,compensation_mode,session_count,session_rate,monthly_salary,gross_amount,advance_deduction,amount_due,status,paid_at,notes,payment_method,payment_reference,cancellation_reason,payment_reversed_at,payment_reversal_reason,session_breakdown').eq('centre_id', profile.centreId).order('period_start', { ascending: false }),
           client.from('finance_teacher_advances').select('id,teacher_id,amount,advance_date,notes,status').eq('centre_id', profile.centreId).order('advance_date', { ascending: false }),
           client.from('finance_teacher_advance_repayments').select('teacher_id,payroll_id,amount,status').eq('centre_id', profile.centreId).eq('status', 'active'),
           client.from('finance_teacher_rates').select('id,teacher_id,compensation_mode,hourly_rate,session_rate,monthly_salary,effective_from,notes').eq('centre_id', profile.centreId).order('effective_from', { ascending: false }),
@@ -139,17 +140,17 @@ export function FinanceDashboardPage() {
     let active = true;
     async function loadValidatedSessions() {
       if (modal !== 'payroll' || !isDirector || !profile?.centreId || !payrollForm.teacherId || !payrollForm.periodStart || !payrollForm.periodEnd) {
-        setValidatedSessionStats({ count: 0, hours: 0, gross: 0, loading: false, missingRateCount: 0, modeMismatchCount: 0, rateSummary: [] });
+        setValidatedSessionStats({ count: 0, hours: 0, gross: 0, loading: false, missingRateCount: 0, modeMismatchCount: 0, rateSummary: [], breakdown: [] });
         return;
       }
-      setValidatedSessionStats((current) => ({ ...current, loading: true, gross: 0, missingRateCount: 0, modeMismatchCount: 0, rateSummary: [] }));
+      setValidatedSessionStats((current) => ({ ...current, loading: true, gross: 0, missingRateCount: 0, modeMismatchCount: 0, rateSummary: [], breakdown: [] }));
       try {
         const client = getSupabaseClient();
         const courseResult = await client.from('cours').select('id,debut,fin').eq('centre_id', profile.centreId).eq('formateur_id', Number(payrollForm.teacherId));
         if (courseResult.error) throw courseResult.error;
         const courseRows = (courseResult.data ?? []) as CourseTime[];
         if (!courseRows.length) {
-          if (active) setValidatedSessionStats({ count: 0, hours: 0, gross: 0, loading: false, missingRateCount: 0, modeMismatchCount: 0, rateSummary: [] });
+          if (active) setValidatedSessionStats({ count: 0, hours: 0, gross: 0, loading: false, missingRateCount: 0, modeMismatchCount: 0, rateSummary: [], breakdown: [] });
           return;
         }
         const courseIds = courseRows.map((course) => course.id);
@@ -164,6 +165,7 @@ export function FinanceDashboardPage() {
         const byId = new Map(courseRows.map((course) => [String(course.id), course]));
         let count = 0, hours = 0, gross = 0, missingRateCount = 0, modeMismatchCount = 0;
         const rateSummary = new Set<string>();
+        const breakdown: PayrollSessionLine[] = [];
         for (const session of approved) {
           if (cancelled.has(String(session.cours_id) + '|' + session.date)) continue;
           const course = byId.get(String(session.cours_id));
@@ -180,15 +182,18 @@ export function FinanceDashboardPage() {
           if (rate.compensation_mode !== payrollForm.compensationMode) { modeMismatchCount += 1; continue; }
           if (rate.compensation_mode === 'hourly') {
             const hourly = numeric(rate.hourly_rate);
-            gross += sessionHours * hourly;
+            const lineGross = Math.round(sessionHours * hourly * 100) / 100;
+            gross += lineGross;
+            breakdown.push({ course_id: String(session.cours_id), session_date: session.date, planned_minutes: Math.round(sessionHours * 60), compensation_mode: 'hourly', rate_effective_from: rate.effective_from, applied_rate: hourly, gross_amount: lineGross });
             rateSummary.add(rate.effective_from + ' : ' + money(hourly) + '/h');
           } else {
             const perSession = numeric(rate.session_rate);
             gross += perSession;
+            breakdown.push({ course_id: String(session.cours_id), session_date: session.date, planned_minutes: Math.round(sessionHours * 60), compensation_mode: 'session', rate_effective_from: rate.effective_from, applied_rate: perSession, gross_amount: perSession });
             rateSummary.add(rate.effective_from + ' : ' + money(perSession) + '/séance');
           }
         }
-        if (active) setValidatedSessionStats({ count, hours: Math.round(hours * 100) / 100, gross: Math.round(gross * 100) / 100, loading: false, missingRateCount, modeMismatchCount, rateSummary: [...rateSummary].sort() });
+        if (active) setValidatedSessionStats({ count, hours: Math.round(hours * 100) / 100, gross: Math.round(gross * 100) / 100, loading: false, missingRateCount, modeMismatchCount, rateSummary: [...rateSummary].sort(), breakdown });
       } catch (cause) {
         if (active) {
           setValidatedSessionStats({ count: 0, hours: 0, gross: 0, loading: false, missingRateCount: 0, modeMismatchCount: 0, rateSummary: [] });
@@ -373,7 +378,7 @@ export function FinanceDashboardPage() {
     setSaving(true); setError(null); setNotice(null);
     try {
       const client = getSupabaseClient();
-      const payload = { teacher_id: Number(payrollForm.teacherId), period_start: payrollForm.periodStart, period_end: payrollForm.periodEnd, compensation_mode: payrollForm.compensationMode, hours, hourly_rate: hourlyRate, session_count: sessionCount, session_rate: sessionRate, monthly_salary: monthlySalary, gross_amount: Math.round(gross * 100) / 100, advance_deduction: Math.round(deduction * 100) / 100, amount_due: Math.round((gross - deduction) * 100) / 100, notes: payrollForm.notes.trim() || null };
+      const payload = { teacher_id: Number(payrollForm.teacherId), period_start: payrollForm.periodStart, period_end: payrollForm.periodEnd, compensation_mode: payrollForm.compensationMode, hours, hourly_rate: hourlyRate, session_count: sessionCount, session_rate: sessionRate, monthly_salary: monthlySalary, gross_amount: Math.round(gross * 100) / 100, advance_deduction: Math.round(deduction * 100) / 100, amount_due: Math.round((gross - deduction) * 100) / 100, notes: payrollForm.notes.trim() || null, session_breakdown: payrollForm.compensationMode === 'monthly' ? [] : validatedSessionStats.breakdown };
       let payrollId = editingPayrollId;
       if (editingPayrollId) {
         const result = await client.from('finance_teacher_payroll').update(payload).eq('id', editingPayrollId).eq('centre_id', profile.centreId).eq('status', 'draft').select('id').maybeSingle();
