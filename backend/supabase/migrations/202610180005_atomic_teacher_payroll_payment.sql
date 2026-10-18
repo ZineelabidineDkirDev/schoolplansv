@@ -88,6 +88,7 @@ for insert to authenticated with check (
 create or replace function public.finance_pay_teacher_payroll(
   p_payroll_id uuid,
   p_account_id uuid,
+  p_amount numeric,
   p_paid_at timestamptz,
   p_payment_method text,
   p_payment_reference text default null
@@ -135,6 +136,9 @@ begin
   end if;
   if v_amount <= 0 then
     raise exception 'Le montant à payer doit être supérieur à zéro.';
+  end if;
+  if p_amount is null or abs(p_amount - v_amount) > 0.001 then
+    raise exception 'Le montant saisi ne correspond plus au net à payer. Rechargez la rémunération avant de confirmer.';
   end if;
 
   select a.account_type, a.name
@@ -201,7 +205,7 @@ begin
 end;
 $$;
 
-revoke all on function public.finance_pay_teacher_payroll(uuid, uuid, timestamptz, text, text) from public;
+revoke all on function public.finance_pay_teacher_payroll(uuid, uuid, numeric, timestamptz, text, text) from public;
 grant execute on function public.finance_pay_teacher_payroll(uuid, uuid, timestamptz, text, text) to authenticated;
 revoke all on function public.finance_reverse_teacher_payroll_payment(uuid, text) from public;
 grant execute on function public.finance_reverse_teacher_payroll_payment(uuid, text) to authenticated;
