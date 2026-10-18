@@ -7141,3 +7141,295 @@ button:disabled {
   .finance-modal-grid { grid-template-columns: 1fr; }
   .finance-content-heading { align-items: stretch; }
 }
+
+
+/* Interface UX polish — preserve the existing SchoolPlans palette and theme tokens. */
+:root {
+  --sp-radius-sm: 10px;
+  --sp-radius-md: 14px;
+  --sp-radius-lg: 18px;
+  --sp-space-section: clamp(16px, 2vw, 24px);
+  --sp-focus-ring: color-mix(in srgb, var(--brand) 24%, transparent);
+}
+
+.sp-app-content {
+  gap: clamp(16px, 2vw, 24px);
+}
+
+.sp-page-heading {
+  align-items: center;
+  gap: 18px;
+  margin-bottom: 6px;
+}
+
+.sp-page-eyebrow {
+  line-height: 1.4;
+}
+
+.sp-page-title {
+  max-width: 26ch;
+  text-wrap: balance;
+}
+
+.sp-page-description {
+  max-width: 72ch;
+  line-height: 1.65;
+}
+
+.sp-panel,
+.sp-card,
+.sp-table-wrap,
+.finance-content-panel,
+.finance-operation-card,
+.finance-metric-card,
+.finance-feature-card {
+  border-radius: var(--sp-radius-lg);
+}
+
+.sp-panel,
+.sp-card {
+  padding: clamp(16px, 2vw, 22px);
+}
+
+.sp-panel > :first-child,
+.sp-card > :first-child {
+  margin-top: 0;
+}
+
+.sp-panel > :last-child,
+.sp-card > :last-child {
+  margin-bottom: 0;
+}
+
+/* Clear, consistent controls without changing brand colors. */
+.sp-btn {
+  min-height: 42px;
+  border-radius: 11px;
+  line-height: 1.25;
+  transition: transform 140ms ease, box-shadow 140ms ease, filter 140ms ease;
+}
+
+.sp-btn:not(:disabled):hover {
+  filter: brightness(1.06);
+}
+
+.sp-btn:not(:disabled):active {
+  transform: translateY(1px);
+}
+
+.sp-btn:disabled {
+  cursor: not-allowed;
+  opacity: .55;
+}
+
+.sp-field,
+.sp-form-field input,
+.sp-form-field select,
+.sp-form-field textarea,
+input.sp-field,
+select.sp-field,
+textarea.sp-field {
+  min-width: 0;
+  min-height: 44px;
+  border-radius: 11px;
+  transition: border-color 140ms ease, box-shadow 140ms ease;
+}
+
+.sp-field::placeholder {
+  color: var(--mute);
+  opacity: .78;
+}
+
+.sp-form-field {
+  line-height: 1.45;
+}
+
+.sp-form-field > :is(input, select, textarea) {
+  width: 100%;
+}
+
+textarea.sp-field,
+.sp-form-field textarea {
+  min-height: 104px;
+  resize: vertical;
+}
+
+:where(button, a, input, select, textarea, [tabindex]):focus-visible {
+  outline: 2px solid var(--brand);
+  outline-offset: 3px;
+}
+
+:where(input, select, textarea):focus-visible {
+  box-shadow: 0 0 0 4px var(--sp-focus-ring);
+}
+
+.sp-status {
+  margin-bottom: 0;
+  padding: 5px 10px;
+  line-height: 1.35;
+  white-space: normal;
+}
+
+.sp-table-wrap {
+  scrollbar-color: var(--line) transparent;
+}
+
+.sp-table {
+  border-collapse: separate;
+  border-spacing: 0;
+}
+
+.sp-table th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: var(--card);
+  letter-spacing: .035em;
+}
+
+.sp-table tbody tr {
+  transition: background-color 120ms ease;
+}
+
+.sp-table tbody tr:hover {
+  background: color-mix(in srgb, var(--brand) 4%, var(--card));
+}
+
+.sp-table td,
+.sp-table th {
+  line-height: 1.5;
+}
+
+.sp-empty {
+  display: grid;
+  justify-items: center;
+  gap: 7px;
+  padding: clamp(24px, 4vw, 40px) 18px;
+  border: 1px dashed var(--line);
+  border-radius: var(--sp-radius-md);
+  text-align: center;
+}
+
+.sp-empty p {
+  margin: 0;
+}
+
+.sp-modal-backdrop {
+  padding: max(16px, env(safe-area-inset-top)) 16px max(16px, env(safe-area-inset-bottom));
+}
+
+.sp-modal {
+  border-radius: 22px;
+}
+
+.sp-modal-close {
+  transition: border-color 140ms ease, transform 140ms ease;
+}
+
+.sp-modal-close:hover {
+  transform: rotate(3deg);
+}
+
+.finance-modal,
+.finance-content-panel,
+.finance-operation-card {
+  min-width: 0;
+}
+
+.finance-modal-form {
+  gap: 16px;
+}
+
+.finance-modal-actions {
+  position: sticky;
+  bottom: calc(-1 * clamp(16px, 3vw, 30px));
+  z-index: 2;
+  margin: 4px calc(-1 * clamp(16px, 3vw, 30px)) calc(-1 * clamp(16px, 3vw, 30px));
+  padding: 14px clamp(16px, 3vw, 30px);
+  border-top: 1px solid var(--line);
+  background: var(--card);
+}
+
+.sp-toast {
+  border-radius: 14px;
+}
+
+.dashboard-card,
+.student-portal-metric,
+.finance-metric-card,
+.finance-feature-card,
+.finance-account-card {
+  min-width: 0;
+}
+
+@media (max-width: 760px) {
+  .sp-page-heading {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .sp-page-heading > :last-child {
+    width: 100%;
+  }
+
+  .sp-page-heading > :last-child .sp-btn {
+    flex: 1 1 auto;
+  }
+
+  .sp-panel,
+  .sp-card {
+    padding: 15px;
+  }
+
+  .sp-table th,
+  .sp-table td {
+    padding: 10px 11px;
+  }
+
+  .sp-modal-backdrop {
+    align-items: end;
+    padding: 8px 8px max(8px, env(safe-area-inset-bottom));
+  }
+
+  .sp-modal {
+    width: 100%;
+    max-height: min(92dvh, 1000px);
+    border-radius: 20px 20px 14px 14px;
+  }
+}
+
+@media (max-width: 480px) {
+  .sp-page-title {
+    font-size: clamp(21px, 6vw, 27px);
+  }
+
+  .sp-btn {
+    max-width: 100%;
+    white-space: normal;
+  }
+
+  .finance-modal-actions {
+    flex-direction: column-reverse;
+  }
+
+  .finance-modal-actions .sp-btn {
+    width: 100%;
+  }
+
+  .sp-toast-stack {
+    right: 10px;
+    width: calc(100vw - 20px);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .sp-btn,
+  .sp-field,
+  .sp-form-field input,
+  .sp-form-field select,
+  .sp-form-field textarea,
+  .sp-modal-close,
+  .sp-table tbody tr {
+    transition: none !important;
+  }
+}
