@@ -235,7 +235,7 @@ export function FinanceDashboardPage() {
         }
         const courseIds = courseRows.map((course) => course.id);
         const [sessionResult, cancellationResult] = await Promise.all([
-          client.from('seances_realisees').select('cours_id,date,validation_status').eq('centre_id', profile.centreId).eq('validation_status', 'approved').gte('date', periodStart).lte('date', periodEnd).in('cours_id', courseIds),
+          client.from('seances_realisees').select('cours_id,date,validation_status,planned_minutes').eq('centre_id', profile.centreId).eq('validation_status', 'approved').gte('date', periodStart).lte('date', periodEnd).in('cours_id', courseIds),
           client.from('annulations').select('cours_id,date').eq('centre_id', profile.centreId).gte('date', periodStart).lte('date', periodEnd).in('cours_id', courseIds),
         ]);
         if (sessionResult.error) throw sessionResult.error;
