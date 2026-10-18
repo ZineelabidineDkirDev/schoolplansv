@@ -71,9 +71,9 @@ export type PlanningData = {
   closedDates: Record<string, string>;
   cancelledOccurrences: Set<string>;
   completedOccurrences: Set<string>;
-  pendingOccurrences: Set<string>;
-  rejectedOccurrences: Set<string>;
-  rejectionReasonsByOccurrence: Record<string, string>;
+  pendingOccurrences?: Set<string>;
+  rejectedOccurrences?: Set<string>;
+  rejectionReasonsByOccurrence?: Record<string, string>;
 };
 
 export type PlanningFilters = {
@@ -89,8 +89,8 @@ export type PlanningOccurrence = PlanningCourse & {
   endsAtMinutes: number;
   cancelled: boolean;
   completed: boolean;
-  validationStatus: 'none' | 'pending' | 'approved' | 'rejected';
-  rejectionReason: string | null;
+  validationStatus?: 'none' | 'pending' | 'approved' | 'rejected';
+  rejectionReason?: string | null;
 };
 
 export type PlanningCourseInput = {
