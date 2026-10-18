@@ -196,7 +196,7 @@ export function FinanceDashboardPage() {
         if (active) setValidatedSessionStats({ count, hours: Math.round(hours * 100) / 100, gross: Math.round(gross * 100) / 100, loading: false, missingRateCount, modeMismatchCount, rateSummary: [...rateSummary].sort(), breakdown });
       } catch (cause) {
         if (active) {
-          setValidatedSessionStats({ count: 0, hours: 0, gross: 0, loading: false, missingRateCount: 0, modeMismatchCount: 0, rateSummary: [] });
+          setValidatedSessionStats({ count: 0, hours: 0, gross: 0, loading: false, missingRateCount: 0, modeMismatchCount: 0, rateSummary: [], breakdown: [] });
           setError(readableFinanceError(cause, 'Impossible de calculer les séances validées.'));
         }
       }
