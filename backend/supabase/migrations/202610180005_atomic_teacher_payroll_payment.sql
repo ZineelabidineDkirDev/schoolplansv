@@ -37,7 +37,7 @@ begin
   loop
     execute format('drop policy %I on public.finance_audit_log', existing_policy.policyname);
   end loop;
-end $;
+end $$;
 
 drop policy if exists finance_teacher_payroll_trainer_read on public.finance_teacher_payroll;
 create policy finance_teacher_payroll_trainer_read on public.finance_teacher_payroll
