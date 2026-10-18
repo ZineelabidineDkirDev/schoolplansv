@@ -13,8 +13,10 @@ import { calculateFormationProgress } from '../../business/planning/planningProg
 import {
   deletePlanningClosure,
   deletePlanningCourse,
+  correctApprovedPlanningOccurrence,
   getPlanningData,
   markPlanningOccurrenceCompleted,
+  reviewPlanningOccurrence,
   savePlanningClosure,
   savePlanningCourse,
   setPlanningOccurrenceCancelled,
@@ -49,6 +51,8 @@ type EditorState = {
   recurring: boolean;
   cancelled: boolean;
   completed: boolean;
+  validationStatus: 'none' | 'pending' | 'approved' | 'rejected';
+  rejectionReason: string | null;
 };
 
 const DAY_NAMES = ['Lundi', 'Mardi', 'Mercredi', 'Jeudi', 'Vendredi', 'Samedi'];
@@ -104,9 +108,13 @@ function CourseCard({
   const height = ((occurrence.endsAtMinutes - occurrence.startsAtMinutes) / 60) * 56 - 3;
   const stateClass = occurrence.cancelled
     ? ' planning-course-cancelled'
-    : occurrence.completed
-      ? ' planning-course-completed'
-      : '';
+    : occurrence.validationStatus === 'pending'
+      ? ' planning-course-pending'
+      : occurrence.validationStatus === 'rejected'
+        ? ' planning-course-rejected'
+        : occurrence.completed
+          ? ' planning-course-completed'
+          : '';
 
   return (
     <button
@@ -127,9 +135,9 @@ function CourseCard({
       <small>{occurrence.teacherName}</small>
       {occurrence.roomName && <small>{occurrence.roomName}</small>}
       {occurrence.cancelled && <span className="planning-state-label">Annulée</span>}
-      {!occurrence.cancelled && occurrence.completed && (
-        <span className="planning-state-label">Réalisée</span>
-      )}
+      {!occurrence.cancelled && occurrence.validationStatus === 'pending' && <span className="planning-state-label">En attente de validation</span>}
+      {!occurrence.cancelled && occurrence.validationStatus === 'rejected' && <span className="planning-state-label">Refusée — à resoumettre</span>}
+      {!occurrence.cancelled && occurrence.completed && <span className="planning-state-label">Validée</span>}
     </button>
   );
 }
@@ -217,6 +225,9 @@ export function PlanningPage({ view = 'planning' }: { view?: 'planning' | 'sessi
             data.closedDates,
             data.cancelledOccurrences,
             data.completedOccurrences,
+            data.pendingOccurrences ?? new Set(),
+            data.rejectedOccurrences ?? new Set(),
+            data.rejectionReasonsByOccurrence ?? {},
           )
         : [],
     [data, week],
@@ -268,6 +279,8 @@ export function PlanningPage({ view = 'planning' }: { view?: 'planning' | 'sessi
 
   const heading = view === 'planning' ? 'Planning' : 'Séances';
   const visibleSessions = groupedByDay.flat().filter((occurrence) => !occurrence.cancelled);
+  const canManageSchedule =
+    !!profile && ['admin', 'director'].includes(profile.role) && permissions.cours === true;
   const canManage =
     !!profile &&
     profile.role !== 'super_admin' &&
@@ -299,7 +312,7 @@ export function PlanningPage({ view = 'planning' }: { view?: 'planning' | 'sessi
   } as const;
 
   function openCreate(date: string, startMinutes = 9 * 60) {
-    if (!canManage || !data || data.closedDates[date]) return;
+    if (!canManageSchedule || !data || data.closedDates[date]) return;
     const start = Math.min(Math.max(Math.ceil(startMinutes / 30) * 30, 8 * 60), 18 * 60 + 30);
     const firstGroup = data.filters.groups.find(
       (group) =>
@@ -324,6 +337,8 @@ export function PlanningPage({ view = 'planning' }: { view?: 'planning' | 'sessi
       recurring: true,
       cancelled: false,
       completed: false,
+      validationStatus: 'none',
+      rejectionReason: null,
     });
   }
 
@@ -345,6 +360,8 @@ export function PlanningPage({ view = 'planning' }: { view?: 'planning' | 'sessi
       recurring: occurrence.startsOn !== occurrence.endsOn,
       cancelled: occurrence.cancelled,
       completed: occurrence.completed,
+      validationStatus: occurrence.validationStatus ?? (occurrence.completed ? 'approved' : 'none'),
+      rejectionReason: occurrence.rejectionReason ?? null,
     });
   }
 
@@ -386,6 +403,7 @@ export function PlanningPage({ view = 'planning' }: { view?: 'planning' | 'sessi
 
   async function submitEditor(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    if (!canManageSchedule) { setActionError('Seul le directeur ou l’administrateur peut modifier le planning.'); return; }
     if (!data || !editor) return;
     const input: PlanningCourseInput = {
       ...(editor.courseId !== undefined ? { courseId: editor.courseId } : {}),
@@ -405,6 +423,7 @@ export function PlanningPage({ view = 'planning' }: { view?: 'planning' | 'sessi
   }
 
   async function deleteCourse() {
+    if (!canManageSchedule) { setActionError('Seul le directeur ou l’administrateur peut supprimer un cours.'); return; }
     if (!editor?.courseId || !await confirmAction('Supprimer ce cours ?')) return;
     await performAction(
       () => deletePlanningCourse(getSupabaseClient(), actor, editor.courseId!),
@@ -413,6 +432,7 @@ export function PlanningPage({ view = 'planning' }: { view?: 'planning' | 'sessi
   }
 
   async function toggleCancellation() {
+    if (!canManageSchedule) { setActionError('Seul le directeur ou l’administrateur peut annuler une séance.'); return; }
     if (!editor?.courseId) return;
     const cancelling = !editor.cancelled;
     const dateLabel = editor.occurrenceDate.split('-').reverse().join('/');
@@ -433,6 +453,31 @@ export function PlanningPage({ view = 'planning' }: { view?: 'planning' | 'sessi
           cancelling,
         ),
       cancelling ? 'Séance annulée.' : 'Séance rétablie.',
+    );
+  }
+
+  async function correctOccurrence() {
+    if (!editor?.courseId || profile?.role !== 'director') return;
+    const reason = window.prompt('Motif obligatoire de la correction de cette validation :');
+    if (!reason?.trim() || reason.trim().length < 3) { setActionError('Un motif détaillé est obligatoire.'); return; }
+    if (!await confirmAction('Retirer la validation de cette séance ? Si elle a déjà été payée, créez ensuite un ajustement financier séparé.')) return;
+    await performAction(
+      () => correctApprovedPlanningOccurrence(getSupabaseClient(), actor, editor.courseId!, editor.occurrenceDate, reason),
+      'Validation corrigée et auditée. Si la séance a déjà été payée, créez un ajustement financier séparé.',
+    );
+  }
+
+  async function reviewOccurrence(status: 'approved' | 'rejected') {
+    if (!editor?.courseId || profile?.role !== 'director') return;
+    const reason = status === 'rejected' ? window.prompt('Motif obligatoire du refus :') : undefined;
+    if (status === 'rejected' && !reason?.trim()) {
+      setActionError('Le refus nécessite un motif.');
+      return;
+    }
+    if (!await confirmAction(status === 'approved' ? 'Valider cette séance réalisée ?' : 'Refuser cette séance avec le motif indiqué ?')) return;
+    await performAction(
+      () => reviewPlanningOccurrence(getSupabaseClient(), actor, editor.courseId!, editor.occurrenceDate, status, reason),
+      status === 'approved' ? 'Séance validée.' : 'Séance refusée. Le formateur pourra consulter le motif et la resoumettre.',
     );
   }
 
@@ -647,9 +692,9 @@ export function PlanningPage({ view = 'planning' }: { view?: 'planning' | 'sessi
                 </small>
               </div>
               {occurrence.cancelled && <span className="planning-state-label">Annulée</span>}
-              {!occurrence.cancelled && occurrence.completed && (
-                <span className="planning-state-label">Réalisée</span>
-              )}
+              {!occurrence.cancelled && occurrence.validationStatus === 'pending' && <span className="planning-state-label">En attente de validation</span>}
+              {!occurrence.cancelled && occurrence.validationStatus === 'rejected' && <span className="planning-state-label">Refusée</span>}
+              {!occurrence.cancelled && occurrence.completed && <span className="planning-state-label">Validée</span>}
               {canManage && (
                 <button
                   className="planning-action-link"
@@ -763,6 +808,9 @@ export function PlanningPage({ view = 'planning' }: { view?: 'planning' | 'sessi
                         <small className="planning-table-secondary">
                           {DAY_NAMES[occurrence.weekday]}
                         </small>
+                        {occurrence.validationStatus === 'pending' && <small className="planning-table-secondary">En attente de validation</small>}
+                        {occurrence.validationStatus === 'rejected' && <small className="planning-table-secondary">Refusée : {occurrence.rejectionReason || 'motif à consulter'}</small>}
+                        {occurrence.validationStatus === 'approved' && <small className="planning-table-secondary">Séance validée</small>}
                         {canManage && (
                           <button
                             className="planning-action-link"
@@ -812,14 +860,14 @@ export function PlanningPage({ view = 'planning' }: { view?: 'planning' | 'sessi
     <section aria-label={heading} className="mx-auto w-full max-w-screen-2xl space-y-4">
       <PageHeader
         actions={
-          view === 'planning' && (canManage || canManageClosures) ? (
+          view === 'planning' && (canManageSchedule || canManageClosures) ? (
             <>
               {canManageClosures && (
                 <Button onClick={openClosureManager} type="button" variant="secondary">
                   Jours fermés
                 </Button>
               )}
-              {canManage && (
+              {canManageSchedule && (
                 <Button
                   onClick={() => openCreate(toDateKey(addDays(week, selectedDay)))}
                   type="button"
@@ -966,7 +1014,7 @@ export function PlanningPage({ view = 'planning' }: { view?: 'planning' | 'sessi
           >
             <header className="planning-dialog-heading">
               <h2 id="planning-editor-title">
-                {editor.courseId ? 'Modifier une séance' : 'Ajouter une séance'}
+                {profile?.role === 'formateur' ? 'Consulter une séance' : editor.courseId ? 'Modifier une séance' : 'Ajouter une séance'}
               </h2>
               <button
                 aria-label="Fermer"
@@ -979,6 +1027,7 @@ export function PlanningPage({ view = 'planning' }: { view?: 'planning' | 'sessi
               </button>
             </header>
             <form className="planning-editor-form" onSubmit={submitEditor}>
+              <fieldset className="planning-editor-fields" disabled={profile?.role === 'formateur'}>
               <label className="sp-form-field">
                 Matière / module
                 <select
@@ -1136,6 +1185,8 @@ export function PlanningPage({ view = 'planning' }: { view?: 'planning' | 'sessi
                   </small>
                 )}
               </label>
+              </fieldset>
+              {editor.validationStatus === 'rejected' && editor.rejectionReason && <Alert className="planning-form-message" tone="error"><p>Motif du refus : {editor.rejectionReason}</p></Alert>}
               {actionError && (
                 <Alert className="planning-form-message" tone="error">
                   {actionError}
@@ -1144,39 +1195,37 @@ export function PlanningPage({ view = 'planning' }: { view?: 'planning' | 'sessi
               <div className="planning-editor-actions">
                 {editor.courseId !== undefined && (
                   <>
-                    <Button
+                    {canManageSchedule && <Button
                       disabled={saving}
                       onClick={toggleCancellation}
                       type="button"
                       variant="secondary"
                     >
                       {editor.cancelled ? 'Rétablir cette séance' : 'Annuler cette séance'}
-                    </Button>
-                    {profile?.role === 'formateur' &&
-                      !editor.cancelled &&
-                      !editor.completed &&
-                      String(editor.teacherId) === String(teacherId) && (
+                    </Button>}
+                    {profile?.role === 'formateur' && !editor.cancelled && !editor.completed && String(editor.teacherId) === String(teacherId) && editor.validationStatus !== 'pending' && (
                         <Button
                           disabled={saving}
                           onClick={completeOccurrence}
                           type="button"
                           variant="secondary"
                         >
-                          ✓ Séance terminée
+                          {editor.validationStatus === 'rejected' ? '↻ Resoumettre la séance' : '✓ Soumettre pour validation'}
                         </Button>
                       )}
-                    <Button disabled={saving} onClick={deleteCourse} type="button" variant="danger">
+                    {profile?.role === 'director' && editor.validationStatus === 'pending' && <><Button disabled={saving} onClick={() => void reviewOccurrence('approved')} type="button">Valider la séance</Button><Button disabled={saving} onClick={() => void reviewOccurrence('rejected')} type="button" variant="danger">Refuser avec motif</Button></>}{profile?.role === 'director' && editor.validationStatus === 'approved' && <Button disabled={saving} onClick={() => void correctOccurrence()} type="button" variant="secondary">Corriger la validation</Button>}
+                    {canManageSchedule && <Button disabled={saving} onClick={deleteCourse} type="button" variant="danger">
                       Supprimer le cours
-                    </Button>
+                    </Button>}
                   </>
                 )}
-                <Button disabled={saving} type="submit">
+                {canManageSchedule && <Button disabled={saving} type="submit">
                   {saving
                     ? 'Enregistrement…'
                     : editor.courseId
                       ? 'Enregistrer'
                       : 'Ajouter une séance'}
-                </Button>
+                </Button>}
               </div>
             </form>
           </section>

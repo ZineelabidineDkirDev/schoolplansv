@@ -68,6 +68,9 @@ export function getWeekOccurrences(
   closedDates: Record<string, string>,
   cancelledOccurrences: Set<string>,
   completedOccurrences: Set<string>,
+  pendingOccurrences: Set<string> = new Set(),
+  rejectedOccurrences: Set<string> = new Set(),
+  rejectionReasonsByOccurrence: Record<string, string> = {},
 ): PlanningOccurrence[] {
   const monday = getMonday(weekOf);
   const occurrences: PlanningOccurrence[] = [];
@@ -95,6 +98,8 @@ export function getWeekOccurrences(
       endsAtMinutes: parseTimeMinutes(course.endsAt),
       cancelled: cancelledOccurrences.has(key),
       completed: completedOccurrences.has(key),
+      validationStatus: completedOccurrences.has(key) ? 'approved' : pendingOccurrences.has(key) ? 'pending' : rejectedOccurrences.has(key) ? 'rejected' : 'none',
+      rejectionReason: rejectionReasonsByOccurrence[key] ?? null,
     });
   }
 
