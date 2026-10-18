@@ -184,7 +184,7 @@ export async function getPlanningData(
     client.from('formateur_matieres').select('formateur_id,matiere_id'),
     client.from('annulations').select('cours_id,date').eq('centre_id', centreId),
     client.from('fermetures').select('date,libelle').eq('centre_id', centreId),
-    client.from('seances_realisees').select('cours_id,date').eq('centre_id', centreId),
+    client.from('seances_realisees').select('cours_id,date,validation_status,rejection_reason').eq('centre_id', centreId),
   ]);
 
   const results = [
@@ -349,10 +349,33 @@ export async function getPlanningData(
       ),
     ),
     completedOccurrences: new Set(
-      rows(completedResult.data, 'séances réalisées').map(
-        (completed) =>
+      rows(completedResult.data, 'séances réalisées')
+        .filter((completed) => (completed.validation_status ?? 'approved') === 'approved')
+        .map((completed) =>
           `${identifier(completed.cours_id, 'cours réalisé')}|${text(completed.date, 'date réalisée')}`,
-      ),
+        ),
+    ),
+    pendingOccurrences: new Set(
+      rows(completedResult.data, 'séances réalisées')
+        .filter((completed) => completed.validation_status === 'pending')
+        .map((completed) =>
+          `${identifier(completed.cours_id, 'cours en attente')}|${text(completed.date, 'date en attente')}`,
+        ),
+    ),
+    rejectedOccurrences: new Set(
+      rows(completedResult.data, 'séances réalisées')
+        .filter((completed) => completed.validation_status === 'rejected')
+        .map((completed) =>
+          `${identifier(completed.cours_id, 'cours refusé')}|${text(completed.date, 'date refusée')}`,
+        ),
+    ),
+    rejectionReasonsByOccurrence: Object.fromEntries(
+      rows(completedResult.data, 'séances réalisées')
+        .filter((completed) => completed.validation_status === 'rejected' && typeof completed.rejection_reason === 'string')
+        .map((completed) => [
+          `${identifier(completed.cours_id, 'cours refusé')}|${text(completed.date, 'date refusée')}`,
+          completed.rejection_reason as string,
+        ]),
     ),
   };
 }
@@ -534,8 +557,55 @@ export async function markPlanningOccurrenceCompleted(
   const { error } = await client
     .from('seances_realisees')
     .upsert(
-      { cours_id: courseId, date, centre_id: actor.centreId },
+      {
+        cours_id: courseId,
+        date,
+        centre_id: actor.centreId,
+        validation_status: 'pending',
+        submitted_at: new Date().toISOString(),
+        rejection_reason: null,
+        validated_by: null,
+        validated_at: null,
+      },
       { onConflict: 'cours_id,date' },
     );
   if (error) throw error;
+}
+
+export async function reviewPlanningOccurrence(
+  client: SupabaseClient,
+  actor: PlanningActor,
+  courseId: StudentIdentifier,
+  date: string,
+  status: 'approved' | 'rejected',
+  reason?: string,
+): Promise<void> {
+  if (actor.role !== 'director') {
+    throw new Error('Seul le directeur peut valider ou refuser une séance.');
+  }
+  if (!actor.centreId) throw new Error('Votre profil n’est pas rattaché à un centre.');
+  const rejectionReason = reason?.trim() ?? '';
+  if (status === 'rejected' && !rejectionReason) {
+    throw new Error('Un motif est obligatoire pour refuser une séance.');
+  }
+  const { data: userData, error: userError } = await client.auth.getUser();
+  if (userError) throw userError;
+  if (!userData.user) throw new Error('Session expirée. Reconnectez-vous.');
+
+  const { data, error } = await client
+    .from('seances_realisees')
+    .update({
+      validation_status: status,
+      validated_by: userData.user.id,
+      validated_at: new Date().toISOString(),
+      rejection_reason: status === 'rejected' ? rejectionReason : null,
+    })
+    .eq('centre_id', actor.centreId)
+    .eq('cours_id', courseId)
+    .eq('date', date)
+    .eq('validation_status', 'pending')
+    .select('cours_id')
+    .maybeSingle();
+  if (error) throw error;
+  if (!data) throw new Error('Cette séance n’est plus en attente de validation. Actualisez le planning.');
 }
