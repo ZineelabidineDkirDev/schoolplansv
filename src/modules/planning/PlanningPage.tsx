@@ -15,6 +15,7 @@ import {
   deletePlanningCourse,
   getPlanningData,
   markPlanningOccurrenceCompleted,
+  reviewPlanningOccurrence,
   savePlanningClosure,
   savePlanningCourse,
   setPlanningOccurrenceCancelled,
@@ -49,6 +50,8 @@ type EditorState = {
   recurring: boolean;
   cancelled: boolean;
   completed: boolean;
+  validationStatus: 'none' | 'pending' | 'approved' | 'rejected';
+  rejectionReason: string | null;
 };
 
 const DAY_NAMES = ['Lundi', 'Mardi', 'Mercredi', 'Jeudi', 'Vendredi', 'Samedi'];
@@ -104,9 +107,13 @@ function CourseCard({
   const height = ((occurrence.endsAtMinutes - occurrence.startsAtMinutes) / 60) * 56 - 3;
   const stateClass = occurrence.cancelled
     ? ' planning-course-cancelled'
-    : occurrence.completed
-      ? ' planning-course-completed'
-      : '';
+    : occurrence.validationStatus === 'pending'
+      ? ' planning-course-pending'
+      : occurrence.validationStatus === 'rejected'
+        ? ' planning-course-rejected'
+        : occurrence.completed
+          ? ' planning-course-completed'
+          : '';
 
   return (
     <button
@@ -127,9 +134,9 @@ function CourseCard({
       <small>{occurrence.teacherName}</small>
       {occurrence.roomName && <small>{occurrence.roomName}</small>}
       {occurrence.cancelled && <span className="planning-state-label">Annulée</span>}
-      {!occurrence.cancelled && occurrence.completed && (
-        <span className="planning-state-label">Réalisée</span>
-      )}
+      {!occurrence.cancelled && occurrence.validationStatus === 'pending' && <span className="planning-state-label">En attente de validation</span>}
+      {!occurrence.cancelled && occurrence.validationStatus === 'rejected' && <span className="planning-state-label">Refusée — à resoumettre</span>}
+      {!occurrence.cancelled && occurrence.completed && <span className="planning-state-label">Validée</span>}
     </button>
   );
 }
@@ -217,6 +224,9 @@ export function PlanningPage({ view = 'planning' }: { view?: 'planning' | 'sessi
             data.closedDates,
             data.cancelledOccurrences,
             data.completedOccurrences,
+            data.pendingOccurrences ?? new Set(),
+            data.rejectedOccurrences ?? new Set(),
+            data.rejectionReasonsByOccurrence ?? {},
           )
         : [],
     [data, week],
@@ -324,6 +334,8 @@ export function PlanningPage({ view = 'planning' }: { view?: 'planning' | 'sessi
       recurring: true,
       cancelled: false,
       completed: false,
+      validationStatus: 'none',
+      rejectionReason: null,
     });
   }
 
@@ -345,6 +357,8 @@ export function PlanningPage({ view = 'planning' }: { view?: 'planning' | 'sessi
       recurring: occurrence.startsOn !== occurrence.endsOn,
       cancelled: occurrence.cancelled,
       completed: occurrence.completed,
+      validationStatus: occurrence.validationStatus ?? (occurrence.completed ? 'approved' : 'none'),
+      rejectionReason: occurrence.rejectionReason ?? null,
     });
   }
 
@@ -433,6 +447,20 @@ export function PlanningPage({ view = 'planning' }: { view?: 'planning' | 'sessi
           cancelling,
         ),
       cancelling ? 'Séance annulée.' : 'Séance rétablie.',
+    );
+  }
+
+  async function reviewOccurrence(status: 'approved' | 'rejected') {
+    if (!editor?.courseId || profile?.role !== 'director') return;
+    const reason = status === 'rejected' ? window.prompt('Motif obligatoire du refus :') : undefined;
+    if (status === 'rejected' && !reason?.trim()) {
+      setActionError('Le refus nécessite un motif.');
+      return;
+    }
+    if (!await confirmAction(status === 'approved' ? 'Valider cette séance réalisée ?' : 'Refuser cette séance avec le motif indiqué ?')) return;
+    await performAction(
+      () => reviewPlanningOccurrence(getSupabaseClient(), actor, editor.courseId!, editor.occurrenceDate, status, reason),
+      status === 'approved' ? 'Séance validée.' : 'Séance refusée. Le formateur pourra consulter le motif et la resoumettre.',
     );
   }
 
@@ -1136,6 +1164,7 @@ export function PlanningPage({ view = 'planning' }: { view?: 'planning' | 'sessi
                   </small>
                 )}
               </label>
+              {editor.validationStatus === 'rejected' && editor.rejectionReason && <Alert className="planning-form-message" tone="error"><p>Motif du refus : {editor.rejectionReason}</p></Alert>}
               {actionError && (
                 <Alert className="planning-form-message" tone="error">
                   {actionError}
@@ -1152,19 +1181,17 @@ export function PlanningPage({ view = 'planning' }: { view?: 'planning' | 'sessi
                     >
                       {editor.cancelled ? 'Rétablir cette séance' : 'Annuler cette séance'}
                     </Button>
-                    {profile?.role === 'formateur' &&
-                      !editor.cancelled &&
-                      !editor.completed &&
-                      String(editor.teacherId) === String(teacherId) && (
+                    {profile?.role === 'formateur' && !editor.cancelled && !editor.completed && String(editor.teacherId) === String(teacherId) && editor.validationStatus !== 'pending' && (
                         <Button
                           disabled={saving}
                           onClick={completeOccurrence}
                           type="button"
                           variant="secondary"
                         >
-                          ✓ Séance terminée
+                          {editor.validationStatus === 'rejected' ? '↻ Resoumettre la séance' : '✓ Soumettre pour validation'}
                         </Button>
                       )}
+                    {profile?.role === 'director' && editor.validationStatus === 'pending' && <><Button disabled={saving} onClick={() => void reviewOccurrence('approved')} type="button">Valider la séance</Button><Button disabled={saving} onClick={() => void reviewOccurrence('rejected')} type="button" variant="danger">Refuser avec motif</Button></>}
                     <Button disabled={saving} onClick={deleteCourse} type="button" variant="danger">
                       Supprimer le cours
                     </Button>
