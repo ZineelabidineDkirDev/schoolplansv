@@ -206,7 +206,7 @@ end;
 $$;
 
 revoke all on function public.finance_pay_teacher_payroll(uuid, uuid, numeric, timestamptz, text, text) from public;
-grant execute on function public.finance_pay_teacher_payroll(uuid, uuid, timestamptz, text, text) to authenticated;
+grant execute on function public.finance_pay_teacher_payroll(uuid, uuid, numeric, timestamptz, text, text) to authenticated;
 revoke all on function public.finance_reverse_teacher_payroll_payment(uuid, text) from public;
 grant execute on function public.finance_reverse_teacher_payroll_payment(uuid, text) to authenticated;
 
