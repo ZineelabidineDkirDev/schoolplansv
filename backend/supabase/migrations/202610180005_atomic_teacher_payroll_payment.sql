@@ -217,7 +217,8 @@ create unique index if not exists finance_teacher_rates_teacher_effective_uq
 alter table public.finance_teacher_payroll
   add column if not exists payment_reversed_at timestamptz,
   add column if not exists payment_reversal_reason text,
-  add column if not exists payment_reversed_by uuid references auth.users(id) on delete set null;
+  add column if not exists payment_reversed_by uuid references auth.users(id) on delete set null,
+  add column if not exists session_breakdown jsonb not null default '[]'::jsonb;
 
 create or replace function public.finance_capture_audit()
 returns trigger
