@@ -228,6 +228,11 @@ alter table public.finance_teacher_rates
 create unique index if not exists finance_teacher_rates_teacher_effective_uq
   on public.finance_teacher_rates (centre_id, teacher_id, effective_from);
 
+alter table public.finance_teacher_advances
+  add column if not exists account_id uuid references public.finance_accounts(id) on delete set null,
+  add column if not exists payment_method text,
+  add column if not exists payment_reference text;
+
 -- Keep a traceable reversal when a payroll payment was recorded by mistake.
 alter table public.finance_teacher_payroll
   add column if not exists payment_reversed_at timestamptz,
@@ -659,3 +664,95 @@ $$;
 
 revoke all on function public.finance_pay_teacher_adjustment(uuid, uuid, timestamptz, text, text) from public;
 grant execute on function public.finance_pay_teacher_adjustment(uuid, uuid, timestamptz, text, text) to authenticated;
+
+
+-- Record a trainer advance and its treasury outflow atomically.
+create or replace function public.finance_create_teacher_advance(
+  p_teacher_id bigint,
+  p_amount numeric,
+  p_advance_date date,
+  p_notes text,
+  p_account_id uuid,
+  p_payment_method text,
+  p_payment_reference text default null
+)
+returns uuid
+language plpgsql
+security invoker
+set search_path = public, pg_temp
+as $$
+declare
+  v_centre_id uuid;
+  v_profile_centre_id uuid;
+  v_role text;
+  v_account_type text;
+  v_account_name text;
+  v_balance numeric(12,2);
+  v_advance_id uuid;
+begin
+  select p.centre_id, lower(p.role)
+    into v_profile_centre_id, v_role
+  from public.profiles p where p.id = auth.uid();
+
+  if auth.uid() is null or v_role not in ('director','directeur') or v_profile_centre_id is null then
+    raise exception 'Accès refusé : directeur du centre requis.';
+  end if;
+  if p_amount is null or p_amount <= 0 or p_advance_date is null then
+    raise exception 'Saisissez un montant positif et une date valide.';
+  end if;
+  if p_payment_method is null or p_payment_method not in ('cash','bank_transfer','card','cheque','other') then
+    raise exception 'Mode de paiement invalide.';
+  end if;
+  if not exists (select 1 from public.formateurs f where f.id = p_teacher_id and f.centre_id = v_profile_centre_id) then
+    raise exception 'Formateur introuvable pour ce centre.';
+  end if;
+
+  select a.account_type, a.name
+    into v_account_type, v_account_name
+  from public.finance_accounts a
+  where a.id = p_account_id and a.centre_id = v_profile_centre_id and a.active = true
+  for update;
+  if not found then raise exception 'Caisse ou compte bancaire introuvable ou inactif.'; end if;
+  if p_payment_method = 'cash' and v_account_type <> 'cash' then
+    raise exception 'Pour une avance en espèces, sélectionnez une caisse.';
+  end if;
+  if p_payment_method in ('bank_transfer','card','cheque') and v_account_type <> 'bank' then
+    raise exception 'Pour ce mode de paiement, sélectionnez un compte bancaire.';
+  end if;
+
+  select a.opening_balance + coalesce(sum(
+    case when m.movement_type in ('inflow','transfer_in','adjustment') then m.amount else -m.amount end
+  ),0)
+    into v_balance
+  from public.finance_accounts a
+  left join public.finance_account_movements m
+    on m.account_id = a.id and m.centre_id = a.centre_id
+  where a.id = p_account_id and a.centre_id = v_profile_centre_id
+  group by a.id, a.opening_balance;
+  if v_balance < p_amount then
+    raise exception 'Solde insuffisant sur « % » : disponible % DH, nécessaire % DH.', v_account_name, v_balance, p_amount;
+  end if;
+
+  insert into public.finance_teacher_advances (
+    centre_id, teacher_id, amount, advance_date, notes, status, created_by,
+    account_id, payment_method, payment_reference
+  ) values (
+    v_profile_centre_id, p_teacher_id, round(p_amount,2), p_advance_date,
+    nullif(trim(coalesce(p_notes,'')),''), 'active', auth.uid(),
+    p_account_id, p_payment_method, nullif(trim(coalesce(p_payment_reference,'')),'')
+  ) returning id into v_advance_id;
+
+  insert into public.finance_account_movements (
+    centre_id, account_id, movement_type, amount, movement_date,
+    description, source_type, source_id, created_by
+  ) values (
+    v_profile_centre_id, p_account_id, 'outflow', round(p_amount,2), p_advance_date,
+    'Avance formateur ' || p_teacher_id || ' — avance ' || v_advance_id,
+    'teacher_advance', v_advance_id, auth.uid()
+  );
+  return v_advance_id;
+end;
+$$;
+
+revoke all on function public.finance_create_teacher_advance(bigint, numeric, date, text, uuid, text, text) from public;
+grant execute on function public.finance_create_teacher_advance(bigint, numeric, date, text, uuid, text, text) to authenticated;
