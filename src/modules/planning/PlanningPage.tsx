@@ -805,6 +805,9 @@ export function PlanningPage({ view = 'planning' }: { view?: 'planning' | 'sessi
                         <small className="planning-table-secondary">
                           {DAY_NAMES[occurrence.weekday]}
                         </small>
+                        {occurrence.validationStatus === 'pending' && <small className="planning-table-secondary">En attente de validation</small>}
+                        {occurrence.validationStatus === 'rejected' && <small className="planning-table-secondary">Refusée : {occurrence.rejectionReason || 'motif à consulter'}</small>}
+                        {occurrence.validationStatus === 'approved' && <small className="planning-table-secondary">Séance validée</small>}
                         {canManage && (
                           <button
                             className="planning-action-link"
