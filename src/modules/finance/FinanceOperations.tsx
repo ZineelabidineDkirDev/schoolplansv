@@ -32,8 +32,9 @@ function readableFinanceError(cause: unknown, fallback: string): string {
 }
 
 
-export function FinanceOperations({ onChange }: { onChange: () => void }) {
+export function FinanceOperations({ onChange, readOnly = false }: { onChange: () => void; readOnly?: boolean }) {
   const { profile } = useAuth();
+  const isDirector = ['director', 'directeur'].includes(String(profile?.role ?? '').toLowerCase()) && !readOnly;
   const [expenses, setExpenses] = useState<Expense[]>([]);
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [movements, setMovements] = useState<Movement[]>([]);
@@ -92,6 +93,7 @@ export function FinanceOperations({ onChange }: { onChange: () => void }) {
 
   async function createExpense(event: FormEvent<HTMLFormElement>) {
     event.preventDefault(); if (!profile?.centreId) return;
+    if (!isDirector) { setError('Mode consultation : seul le directeur peut effectuer cette opération.'); return; }
     const amount = Number(expenseForm.amount);
     if (!expenseForm.label.trim() || !Number.isFinite(amount) || amount <= 0) { setError('Saisissez un libellé et un montant supérieur à 0 DH.'); return; }
     setSaving(true); setError(null); setNotice(null);
@@ -111,6 +113,7 @@ export function FinanceOperations({ onChange }: { onChange: () => void }) {
 
   async function changeExpenseStatus(expense: Expense, status: 'approved' | 'rejected') {
     if (!profile?.centreId) return;
+    if (!isDirector) { setError('Mode consultation : seul le directeur peut effectuer cette opération.'); return; }
     if (status === 'rejected' && !window.confirm('Supprimer cette dépense en la marquant comme refusée ? Son historique sera conservé.')) return;
     setSaving(true); setError(null); setNotice(null);
     try {
@@ -123,6 +126,7 @@ export function FinanceOperations({ onChange }: { onChange: () => void }) {
 
   async function payExpense(expense: Expense) {
     if (!profile?.centreId) return;
+    if (!isDirector) { setError('Mode consultation : seul le directeur peut effectuer cette opération.'); return; }
     const account = activeAccounts.find((a) => a.id === paymentAccountId);
     if (!account) { setError('Sélectionnez une caisse ou un compte actif.'); return; }
     if (num(expense.amount) > balanceFor(account) + 0.001) { setError('Solde insuffisant dans « ' + account.name + ' » (' + money(balanceFor(account)) + ').'); return; }
@@ -137,6 +141,7 @@ export function FinanceOperations({ onChange }: { onChange: () => void }) {
 
   async function createAccount(event: FormEvent<HTMLFormElement>) {
     event.preventDefault(); if (!profile?.centreId) return;
+    if (!isDirector) { setError('Mode consultation : seul le directeur peut effectuer cette opération.'); return; }
     const opening = Number(accountForm.openingBalance);
     if (!accountForm.name.trim() || !Number.isFinite(opening) || opening < 0) { setError('Saisissez un nom et un solde initial positif ou nul.'); return; }
     setSaving(true); setError(null); setNotice(null);
@@ -153,7 +158,8 @@ export function FinanceOperations({ onChange }: { onChange: () => void }) {
   }
 
   async function deactivateAccount(account: Account) {
-    if (!profile?.centreId || !window.confirm('Désactiver « ' + account.name + ' » ? Son historique sera conservé.')) return;
+    if (!profile?.centreId || !isDirector) { setError('Seul le directeur peut désactiver un compte.'); return; }
+    if (!window.confirm('Désactiver « ' + account.name + ' » ? Son historique sera conservé.')) return;
     setSaving(true); setError(null); setNotice(null);
     try {
       const { error } = await getSupabaseClient().from('finance_accounts').update({ active: false }).eq('id', account.id).eq('centre_id', profile.centreId).eq('active', true);
@@ -165,6 +171,7 @@ export function FinanceOperations({ onChange }: { onChange: () => void }) {
 
   async function createMovement(event: FormEvent<HTMLFormElement>) {
     event.preventDefault(); if (!profile?.centreId) return;
+    if (!isDirector) { setError('Mode consultation : seul le directeur peut effectuer cette opération.'); return; }
     const account = activeAccounts.find((a) => a.id === movementForm.accountId);
     const amount = Number(movementForm.amount);
     if (!account || !movementForm.description.trim() || !Number.isFinite(amount) || amount <= 0) { setError('Choisissez un compte, une description et un montant supérieur à 0 DH.'); return; }
@@ -180,6 +187,7 @@ export function FinanceOperations({ onChange }: { onChange: () => void }) {
 
   async function transfer(event: FormEvent<HTMLFormElement>) {
     event.preventDefault(); if (!profile?.centreId) return;
+    if (!isDirector) { setError('Mode consultation : seul le directeur peut effectuer cette opération.'); return; }
     const source = activeAccounts.find((a) => a.id === movementForm.accountId);
     const destination = activeAccounts.find((a) => a.id === movementForm.destinationId);
     const amount = Number(movementForm.amount);
@@ -203,6 +211,7 @@ export function FinanceOperations({ onChange }: { onChange: () => void }) {
   if (loading) return <LoadingState label="Chargement des dépenses et de la trésorerie…" />;
 
   return <section className="finance-operations-module">
+    {readOnly && <Alert tone="info"><p>Mode consultation : l’administrateur peut consulter les dépenses et la trésorerie, mais seul le directeur peut créer, modifier, valider ou payer des opérations.</p></Alert>}
     {error && <Alert tone="error"><p>{error}</p></Alert>}
     {notice && <Alert tone="success"><p>{notice}</p></Alert>}
     <div className="finance-operation-tabs">
@@ -212,7 +221,7 @@ export function FinanceOperations({ onChange }: { onChange: () => void }) {
     {section === 'expenses' && <>
       <div className="finance-quick-metrics"><article><span>Dépenses en attente/à valider</span><strong>{money(pendingTotal)}</strong></article><article><span>Dépenses payées</span><strong>{money(paidTotal)}</strong></article></div>
       <div className="finance-operation-layout">
-        <div className="finance-operation-card"><div className="finance-content-heading"><div><h3>Nouvelle dépense</h3><p>Ajoutez une dépense à valider avant paiement.</p></div><Button type="button" onClick={() => { setEditingExpenseId(null); setExpenseForm({ label: '', category: 'Loyer', supplier: '', amount: '', expenseDate: today(), dueDate: '', notes: '' }); setModal('expense'); }}>+ Ajouter une dépense</Button></div></div>
+        <div className="finance-operation-card"><div className="finance-content-heading"><div><h3>Nouvelle dépense</h3><p>Ajoutez une dépense à valider avant paiement.</p></div>{isDirector && <Button type="button" onClick={() => { setEditingExpenseId(null); setExpenseForm({ label: '', category: 'Loyer', supplier: '', amount: '', expenseDate: today(), dueDate: '', notes: '' }); setModal('expense'); }}>+ Ajouter une dépense</Button>}</div></div>
         {modal === 'expense' && <OperationsModal title={editingExpenseId ? 'Modifier une dépense' : 'Enregistrer une dépense'} onClose={() => setModal(null)}><form className="finance-modal-form" onSubmit={(e) => void createExpense(e)}>
           <h3>Enregistrer une dépense</h3>
           <label className="sp-form-field">Libellé<input className="sp-field" required maxLength={140} value={expenseForm.label} onChange={(e) => setExpenseForm((v) => ({ ...v, label: e.target.value }))} placeholder="Ex. Loyer du mois" /></label>
@@ -230,7 +239,7 @@ export function FinanceOperations({ onChange }: { onChange: () => void }) {
             <div className="finance-table-wrap"><table className="finance-table"><thead><tr><th>Dépense</th><th>Montant</th><th>Date</th><th>Statut</th><th>Actions</th></tr></thead><tbody>{expenses.map((expense) => <tr key={expense.id}>
               <td>{expense.label}<small>{expense.category}{expense.supplier ? ' · ' + expense.supplier : ''}</small></td><td>{money(num(expense.amount))}</td><td>{expense.expense_date}</td>
               <td><span className={'finance-status finance-status-' + expense.status}>{expense.status === 'pending' ? 'À valider' : expense.status === 'approved' ? 'Validée' : expense.status === 'paid' ? 'Payée' : 'Refusée'}</span></td>
-              <td><div className="finance-row-actions">{expense.status === 'pending' && <><Button type="button" variant="secondary" disabled={saving} onClick={() => { setEditingExpenseId(expense.id); setExpenseForm({ label: expense.label, category: expense.category, supplier: expense.supplier ?? '', amount: String(expense.amount), expenseDate: expense.expense_date, dueDate: expense.due_date ?? '', notes: expense.notes ?? '' }); setModal('expense'); }}>Modifier</Button><Button type="button" variant="danger" disabled={saving} onClick={() => void changeExpenseStatus(expense, 'rejected')}>Supprimer</Button><Button type="button" variant="secondary" disabled={saving} onClick={() => void changeExpenseStatus(expense, 'approved')}>Valider</Button></>}{expense.status === 'approved' && <Button type="button" disabled={saving || !paymentAccountId} onClick={() => void payExpense(expense)}>Marquer payée</Button>}</div></td>
+              <td>{isDirector && <div className="finance-row-actions">{expense.status === 'pending' && <><Button type="button" variant="secondary" disabled={saving} onClick={() => { setEditingExpenseId(expense.id); setExpenseForm({ label: expense.label, category: expense.category, supplier: expense.supplier ?? '', amount: String(expense.amount), expenseDate: expense.expense_date, dueDate: expense.due_date ?? '', notes: expense.notes ?? '' }); setModal('expense'); }}>Modifier</Button><Button type="button" variant="danger" disabled={saving} onClick={() => void changeExpenseStatus(expense, 'rejected')}>Supprimer</Button><Button type="button" variant="secondary" disabled={saving} onClick={() => void changeExpenseStatus(expense, 'approved')}>Valider</Button></>}{expense.status === 'approved' && <Button type="button" disabled={saving || !paymentAccountId} onClick={() => void payExpense(expense)}>Marquer payée</Button>}</div>}</td>
             </tr>)}</tbody></table></div>
           </>}
         </div>
@@ -246,11 +255,11 @@ export function FinanceOperations({ onChange }: { onChange: () => void }) {
           <label className="sp-form-field">Solde initial (DH)<input className="sp-field" required min="0" step="0.01" type="number" value={accountForm.openingBalance} onChange={(e) => setAccountForm((v) => ({ ...v, openingBalance: e.target.value }))} /></label></>}
           <div className="finance-modal-actions"><Button type="button" variant="secondary" onClick={() => setModal(null)}>Annuler</Button><Button type="submit" disabled={saving}>{saving ? 'Enregistrement…' : editingAccountId ? 'Enregistrer les modifications' : 'Créer le compte'}</Button></div>
         </form></OperationsModal>}
-        <div className="finance-operation-card"><div className="finance-content-heading"><div><h3>Caisses et comptes actifs</h3><p>Soldes calculés à partir des mouvements.</p></div><Button type="button" onClick={() => setModal('account')}>+ Ajouter un compte</Button></div>{activeAccounts.length === 0 ? <p className="management-muted">Créez d’abord une caisse ou un compte bancaire.</p> : <div className="finance-account-grid">{activeAccounts.map((a) => <article className="finance-account-card" key={a.id}><span>{a.account_type === 'cash' ? 'Caisse' : 'Banque'}</span><strong>{a.name}</strong><b>{money(balanceFor(a))}</b><small>Solde initial : {money(num(a.opening_balance))}</small><div className="finance-row-actions"><Button type="button" variant="secondary" disabled={saving} onClick={() => { setEditingAccountId(a.id); setAccountForm({ name: a.name, accountType: a.account_type, openingBalance: String(a.opening_balance) }); setModal('account'); }}>Modifier</Button><Button type="button" variant="danger" disabled={saving} onClick={() => void deactivateAccount(a)}>Supprimer</Button></div></article>)}</div>}</div>
+        <div className="finance-operation-card"><div className="finance-content-heading"><div><h3>Caisses et comptes actifs</h3><p>Soldes calculés à partir des mouvements.</p></div>{isDirector && <Button type="button" onClick={() => setModal('account')}>+ Ajouter un compte</Button>}</div>{activeAccounts.length === 0 ? <p className="management-muted">Créez d’abord une caisse ou un compte bancaire.</p> : <div className="finance-account-grid">{activeAccounts.map((a) => <article className="finance-account-card" key={a.id}><span>{a.account_type === 'cash' ? 'Caisse' : 'Banque'}</span><strong>{a.name}</strong><b>{money(balanceFor(a))}</b><small>Solde initial : {money(num(a.opening_balance))}</small>{isDirector && <div className="finance-row-actions"><Button type="button" variant="secondary" disabled={saving} onClick={() => { setEditingAccountId(a.id); setAccountForm({ name: a.name, accountType: a.account_type, openingBalance: String(a.opening_balance) }); setModal('account'); }}>Modifier</Button><Button type="button" variant="danger" disabled={saving} onClick={() => void deactivateAccount(a)}>Désactiver</Button></div>}</article>)}</div>}</div>
       </div>
       <div className="finance-operation-layout">
-        <div className="finance-operation-card"><div className="finance-content-heading"><div><h3>Mouvements</h3><p>Enregistrez une entrée ou une sortie manuelle.</p></div><Button type="button" onClick={() => setModal('movement')}>+ Nouveau mouvement</Button></div></div>
-        <div className="finance-operation-card"><div className="finance-content-heading"><div><h3>Transfert</h3><p>Déplacez des fonds entre deux comptes.</p></div><Button type="button" disabled={activeAccounts.length < 2} onClick={() => setModal('transfer')}>+ Nouveau transfert</Button></div></div>
+        <div className="finance-operation-card"><div className="finance-content-heading"><div><h3>Mouvements</h3><p>Enregistrez une entrée ou une sortie manuelle.</p></div>{isDirector && <Button type="button" onClick={() => setModal('movement')}>+ Nouveau mouvement</Button>}</div></div>
+        <div className="finance-operation-card"><div className="finance-content-heading"><div><h3>Transfert</h3><p>Déplacez des fonds entre deux comptes.</p></div>{isDirector && <Button type="button" disabled={activeAccounts.length < 2} onClick={() => setModal('transfer')}>+ Nouveau transfert</Button>}</div></div>
         {modal === 'movement' && <OperationsModal title="Entrée / sortie manuelle" onClose={() => setModal(null)}><form className="finance-modal-form" onSubmit={(e) => void createMovement(e)}>
           <h3>Entrée / sortie manuelle</h3>
           <label className="sp-form-field">Compte<select className="sp-field" required value={movementForm.accountId} onChange={(e) => setMovementForm((v) => ({ ...v, accountId: e.target.value }))}><option value="">Sélectionner un compte</option>{activeAccounts.map((a) => <option key={a.id} value={a.id}>{a.name} — {money(balanceFor(a))}</option>)}</select></label>
