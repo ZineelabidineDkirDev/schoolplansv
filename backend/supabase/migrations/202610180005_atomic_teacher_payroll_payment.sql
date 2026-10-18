@@ -31,6 +31,26 @@ begin
     );
   end loop;
 
+  create policy finance_teacher_payroll_trainer_read on public.finance_teacher_payroll
+  for select to authenticated using (
+    exists (
+      select 1 from public.formateurs f
+      where f.id = finance_teacher_payroll.teacher_id
+        and f.centre_id = finance_teacher_payroll.centre_id
+        and f.profile_id = auth.uid()
+    )
+  );
+
+  create policy finance_teacher_rates_trainer_read on public.finance_teacher_rates
+  for select to authenticated using (
+    exists (
+      select 1 from public.formateurs f
+      where f.id = finance_teacher_rates.teacher_id
+        and f.centre_id = finance_teacher_rates.centre_id
+        and f.profile_id = auth.uid()
+    )
+  );
+
   for existing_policy in
     select policyname from pg_policies
     where schemaname = 'public' and tablename = 'finance_audit_log'
