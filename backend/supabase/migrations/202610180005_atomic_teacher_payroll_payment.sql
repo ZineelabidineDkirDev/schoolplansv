@@ -231,6 +231,8 @@ begin
   v_reason := coalesce(
     to_jsonb(new)->>'payment_reversal_reason',
     to_jsonb(new)->>'cancellation_reason',
+    to_jsonb(new)->>'reason',
+    to_jsonb(old)->>'reason',
     to_jsonb(new)->>'notes',
     to_jsonb(old)->>'notes'
   );
