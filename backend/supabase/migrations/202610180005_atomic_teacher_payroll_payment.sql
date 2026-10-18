@@ -1,10 +1,56 @@
 -- SchoolPlans finance v5: atomic teacher payroll payment and strict director-only audit access.
 -- Apply after 202610180004_payroll_business_rules.sql.
 
--- Audit access is limited to the director; administrators remain read-only for operational finance data.
-drop policy if exists finance_audit_log_director_read on public.finance_audit_log;
+-- Remove legacy policies first: PostgreSQL combines permissive policies with OR,
+-- so leaving an old admin-write policy would defeat the director-only rule.
+do $$
+declare
+  t text;
+  existing_policy record;
+begin
+  foreach t in array array[
+    'finance_student_charges','finance_payments','finance_expenses',
+    'finance_accounts','finance_account_movements','finance_teacher_payroll',
+    'finance_teacher_advances','finance_teacher_advance_repayments',
+    'finance_teacher_rates','finance_teacher_payroll_adjustments'
+  ] loop
+    for existing_policy in
+      select policyname from pg_policies
+      where schemaname = 'public' and tablename = t
+    loop
+      execute format('drop policy %I on public.%I', existing_policy.policyname, t);
+    end loop;
+
+    execute format(
+      'create policy %I on public.%I for all to authenticated using (exists (select 1 from public.profiles p where p.id = auth.uid() and p.centre_id = %I.centre_id and lower(p.role) in (''director'', ''directeur''))) with check (exists (select 1 from public.profiles p where p.id = auth.uid() and p.centre_id = %I.centre_id and lower(p.role) in (''director'', ''directeur'')))',
+      t || '_director_all', t, t, t
+    );
+    execute format(
+      'create policy %I on public.%I for select to authenticated using (exists (select 1 from public.profiles p where p.id = auth.uid() and p.centre_id = %I.centre_id and lower(p.role) = ''admin''))',
+      t || '_admin_read', t, t
+    );
+  end loop;
+
+  for existing_policy in
+    select policyname from pg_policies
+    where schemaname = 'public' and tablename = 'finance_audit_log'
+  loop
+    execute format('drop policy %I on public.finance_audit_log', existing_policy.policyname);
+  end loop;
+end $$;
+
 create policy finance_audit_log_director_read on public.finance_audit_log
 for select to authenticated using (
+  exists (
+    select 1 from public.profiles p
+    where p.id = auth.uid()
+      and p.centre_id = finance_audit_log.centre_id
+      and lower(p.role) in ('director', 'directeur')
+  )
+);
+
+create policy finance_audit_log_director_insert on public.finance_audit_log
+for insert to authenticated with check (
   exists (
     select 1 from public.profiles p
     where p.id = auth.uid()
