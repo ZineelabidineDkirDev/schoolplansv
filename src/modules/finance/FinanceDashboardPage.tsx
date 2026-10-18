@@ -217,18 +217,15 @@ export function FinanceDashboardPage() {
       const effectiveAtStart = teacherRates
         .filter((item) => Number(item.teacher_id) === Number(teacher.id) && item.effective_from <= periodStart)
         .sort((a, b) => b.effective_from.localeCompare(a.effective_from))[0];
-      if (effectiveAtStart?.compensation_mode === 'monthly') {
-        setTrainerEstimate({ loading: false, mode: 'Salaire mensuel fixe', hours: 0, count: 0, amount: numeric(effectiveAtStart.monthly_salary), complete: numeric(effectiveAtStart.monthly_salary) > 0, message: 'Salaire fixe applicable au premier jour du mois.', rateSummary: [periodStart + ' : ' + money(numeric(effectiveAtStart.monthly_salary)) + '/mois'] });
-        return;
-      }
-      setTrainerEstimate({ loading: true, mode: effectiveAtStart?.compensation_mode ?? 'Tarif à confirmer', hours: 0, count: 0, amount: 0, complete: false, message: '', rateSummary: [] });
+      const monthlySalary = effectiveAtStart?.compensation_mode === 'monthly' ? numeric(effectiveAtStart.monthly_salary) : 0;
+      setTrainerEstimate({ loading: true, mode: effectiveAtStart?.compensation_mode === 'monthly' ? 'Salaire mensuel fixe' : effectiveAtStart?.compensation_mode ?? 'Tarif à confirmer', hours: 0, count: 0, amount: monthlySalary, complete: false, message: '', rateSummary: effectiveAtStart?.compensation_mode === 'monthly' ? [periodStart + ' : ' + money(monthlySalary) + '/mois'] : [] });
       try {
         const client = getSupabaseClient();
         const courseResult = await client.from('cours').select('id,debut,fin').eq('centre_id', profile.centreId).eq('formateur_id', teacher.id);
         if (courseResult.error) throw courseResult.error;
         const courseRows = (courseResult.data ?? []) as CourseTime[];
         if (!courseRows.length) {
-          if (active) setTrainerEstimate({ loading: false, mode: effectiveAtStart?.compensation_mode ?? 'Tarif à confirmer', hours: 0, count: 0, amount: 0, complete: !!effectiveAtStart, message: effectiveAtStart ? 'Aucune séance validée ce mois-ci.' : 'Aucun tarif en vigueur au début du mois.', rateSummary: [] });
+          if (active) setTrainerEstimate({ loading: false, mode: effectiveAtStart?.compensation_mode === 'monthly' ? 'Salaire mensuel fixe' : effectiveAtStart?.compensation_mode ?? 'Tarif à confirmer', hours: 0, count: 0, amount: monthlySalary, complete: effectiveAtStart?.compensation_mode === 'monthly' ? monthlySalary > 0 : !!effectiveAtStart, message: effectiveAtStart?.compensation_mode === 'monthly' ? 'Salaire fixe applicable au premier jour du mois.' : effectiveAtStart ? 'Aucune séance validée ce mois-ci.' : 'Aucun tarif en vigueur au début du mois.', rateSummary: effectiveAtStart?.compensation_mode === 'monthly' ? [periodStart + ' : ' + money(monthlySalary) + '/mois'] : [] });
           return;
         }
         const courseIds = courseRows.map((course) => course.id);
@@ -251,6 +248,7 @@ export function FinanceDashboardPage() {
           const duration = durationHours(course.debut, course.fin);
           if (duration <= 0) continue;
           count += 1; hours += duration;
+          if (effectiveAtStart?.compensation_mode === 'monthly') continue;
           const rate = teacherRates
             .filter((item) => Number(item.teacher_id) === Number(teacher.id) && item.effective_from <= session.date)
             .sort((a, b) => b.effective_from.localeCompare(a.effective_from))[0];
@@ -268,9 +266,10 @@ export function FinanceDashboardPage() {
         }
         const mixedModes = modes.size > 1 || (effectiveAtStart && modes.size > 0 && !modes.has(effectiveAtStart.compensation_mode));
         if (mixedModes) modeMismatchCount += 1;
-        const complete = missingRateCount === 0 && modeMismatchCount === 0 && !!effectiveAtStart;
-        const message = missingRateCount ? 'Tarif manquant pour ' + missingRateCount + ' séance(s).' : modeMismatchCount ? 'Le mode de rémunération a changé pendant le mois ; demandez au directeur de vérifier le calcul.' : !effectiveAtStart ? 'Aucun tarif en vigueur au premier jour du mois.' : count ? 'Calcul basé uniquement sur les séances validées par le directeur.' : 'Aucune séance validée ce mois-ci.';
-        if (active) setTrainerEstimate({ loading: false, mode: effectiveAtStart?.compensation_mode ?? ([...modes].join(' / ') || 'Tarif à confirmer'), hours: Math.round(hours * 100) / 100, count, amount: Math.round(amount * 100) / 100, complete, message, rateSummary: [...rateSummary].sort() });
+        const monthlyMode = effectiveAtStart?.compensation_mode === 'monthly';
+        const complete = monthlyMode ? monthlySalary > 0 : missingRateCount === 0 && modeMismatchCount === 0 && !!effectiveAtStart;
+        const message = monthlyMode ? 'Salaire fixe applicable au premier jour du mois.' : missingRateCount ? 'Tarif manquant pour ' + missingRateCount + ' séance(s).' : modeMismatchCount ? 'Le mode de rémunération a changé pendant le mois ; demandez au directeur de vérifier le calcul.' : !effectiveAtStart ? 'Aucun tarif en vigueur au premier jour du mois.' : count ? 'Calcul basé uniquement sur les séances validées par le directeur.' : 'Aucune séance validée ce mois-ci.';
+        if (active) setTrainerEstimate({ loading: false, mode: monthlyMode ? 'Salaire mensuel fixe' : effectiveAtStart?.compensation_mode ?? ([...modes].join(' / ') || 'Tarif à confirmer'), hours: Math.round(hours * 100) / 100, count, amount: Math.round((monthlyMode ? monthlySalary : amount) * 100) / 100, complete, message, rateSummary: monthlyMode ? [periodStart + ' : ' + money(monthlySalary) + '/mois'] : [...rateSummary].sort() });
       } catch (cause) {
         if (active) setTrainerEstimate({ loading: false, mode: '', hours: 0, count: 0, amount: 0, complete: false, message: readableFinanceError(cause, 'Impossible de calculer votre estimation.'), rateSummary: [] });
       }
