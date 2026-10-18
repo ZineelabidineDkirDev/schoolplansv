@@ -104,7 +104,10 @@ begin
     case when tg_op in ('INSERT','UPDATE') then to_jsonb(new) else null end,
     v_reason, auth.uid()
   );
-  return coalesce(new, old);
+  if tg_op = 'DELETE' then
+    return old;
+  end if;
+  return new;
 end;
 $$;
 
