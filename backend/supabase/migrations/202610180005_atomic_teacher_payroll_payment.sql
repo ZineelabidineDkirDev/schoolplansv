@@ -61,6 +61,18 @@ for select to authenticated using (
   )
 );
 
+drop policy if exists finance_teacher_payroll_adjustments_trainer_read on public.finance_teacher_payroll_adjustments;
+create policy finance_teacher_payroll_adjustments_trainer_read on public.finance_teacher_payroll_adjustments
+for select to authenticated using (
+  status = 'paid'
+  and exists (
+    select 1 from public.formateurs f
+    where f.id = finance_teacher_payroll_adjustments.teacher_id
+      and f.centre_id = finance_teacher_payroll_adjustments.centre_id
+      and f.profile_id = auth.uid()
+  )
+);
+
 create policy finance_audit_log_director_read on public.finance_audit_log
 for select to authenticated using (
   exists (
