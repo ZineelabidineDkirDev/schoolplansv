@@ -382,8 +382,15 @@ set search_path = public, pg_temp
 as $$
 declare
   v_minutes integer;
+  v_recompute boolean := false;
 begin
-  if tg_op = 'INSERT' or new.cours_id is distinct from old.cours_id or new.date is distinct from old.date then
+  if tg_op = 'INSERT' then
+    v_recompute := true;
+  else
+    v_recompute := new.cours_id is distinct from old.cours_id or new.date is distinct from old.date;
+  end if;
+
+  if v_recompute then
     select greatest(0, round(extract(epoch from (c.fin - c.debut)) / 60)::integer)
       into v_minutes
     from public.cours c
@@ -395,7 +402,7 @@ begin
   end if;
   return new;
 end;
-$$;
+$;
 
 drop trigger if exists seances_realisees_snapshot_duration on public.seances_realisees;
 create trigger seances_realisees_snapshot_duration
