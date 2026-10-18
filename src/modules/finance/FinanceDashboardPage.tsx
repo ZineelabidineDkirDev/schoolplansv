@@ -446,7 +446,7 @@ export function FinanceDashboardPage() {
     try {
       const paidAt = new Date(payrollPaymentForm.paidAt + 'T12:00:00').toISOString();
       if (!payrollPaymentForm.accountId) throw new Error('Créez ou activez une caisse/un compte bancaire dans la rubrique Trésorerie avant de payer.');
-      const { error } = await getSupabaseClient().rpc('finance_pay_teacher_payroll', { p_payroll_id: item.id, p_account_id: payrollPaymentForm.accountId, p_paid_at: paidAt, p_payment_method: payrollPaymentForm.method, p_payment_reference: payrollPaymentForm.reference.trim() || null });
+      const { error } = await getSupabaseClient().rpc('finance_pay_teacher_payroll', { p_payroll_id: item.id, p_account_id: payrollPaymentForm.accountId, p_amount: amount, p_paid_at: paidAt, p_payment_method: payrollPaymentForm.method, p_payment_reference: payrollPaymentForm.reference.trim() || null });
       if (error) throw error;
       setNotice('Paiement enregistré et rémunération verrouillée.'); setModal(null); reload();
     } catch (cause) { setError(readableFinanceError(cause, 'Impossible de confirmer le paiement.')); }
