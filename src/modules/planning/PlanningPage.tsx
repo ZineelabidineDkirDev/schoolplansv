@@ -403,6 +403,7 @@ export function PlanningPage({ view = 'planning' }: { view?: 'planning' | 'sessi
 
   async function submitEditor(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    if (!canManageSchedule) { setActionError('Seul le directeur ou l’administrateur peut modifier le planning.'); return; }
     if (!data || !editor) return;
     const input: PlanningCourseInput = {
       ...(editor.courseId !== undefined ? { courseId: editor.courseId } : {}),
@@ -422,6 +423,7 @@ export function PlanningPage({ view = 'planning' }: { view?: 'planning' | 'sessi
   }
 
   async function deleteCourse() {
+    if (!canManageSchedule) { setActionError('Seul le directeur ou l’administrateur peut supprimer un cours.'); return; }
     if (!editor?.courseId || !await confirmAction('Supprimer ce cours ?')) return;
     await performAction(
       () => deletePlanningCourse(getSupabaseClient(), actor, editor.courseId!),
@@ -430,6 +432,7 @@ export function PlanningPage({ view = 'planning' }: { view?: 'planning' | 'sessi
   }
 
   async function toggleCancellation() {
+    if (!canManageSchedule) { setActionError('Seul le directeur ou l’administrateur peut annuler une séance.'); return; }
     if (!editor?.courseId) return;
     const cancelling = !editor.cancelled;
     const dateLabel = editor.occurrenceDate.split('-').reverse().join('/');
