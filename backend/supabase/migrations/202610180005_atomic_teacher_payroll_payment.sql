@@ -210,6 +210,9 @@ grant execute on function public.finance_pay_teacher_payroll(uuid, uuid, numeric
 revoke all on function public.finance_reverse_teacher_payroll_payment(uuid, text) from public;
 grant execute on function public.finance_reverse_teacher_payroll_payment(uuid, text) to authenticated;
 
+alter table public.finance_teacher_rates
+  add column if not exists allow_advance_deduction boolean not null default false;
+
 create unique index if not exists finance_teacher_rates_teacher_effective_uq
   on public.finance_teacher_rates (centre_id, teacher_id, effective_from);
 
