@@ -344,7 +344,7 @@ begin
   loop
     execute format('drop policy %I on public.seances_realisees', existing_policy.policyname);
   end loop;
-end $;
+end $$;
 
 drop policy if exists seances_realisees_director_all on public.seances_realisees;
 drop policy if exists seances_realisees_admin_read on public.seances_realisees;
@@ -353,7 +353,6 @@ drop policy if exists seances_realisees_trainer_insert on public.seances_realise
 drop policy if exists seances_realisees_trainer_resubmit on public.seances_realisees;
 
 -- Existing SELECT policies (for example, students viewing their own timetable) are preserved.
-end $$;
 
 create policy seances_realisees_director_all on public.seances_realisees
 for all to authenticated
