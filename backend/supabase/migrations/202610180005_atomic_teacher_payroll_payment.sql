@@ -83,7 +83,7 @@ for select to authenticated using (
   )
 );
 
-grant insert on public.finance_audit_log to authenticated;
+revoke insert on public.finance_audit_log from authenticated;
 
 create policy finance_audit_log_director_insert on public.finance_audit_log
 for insert to authenticated with check (
@@ -243,7 +243,7 @@ alter table public.finance_teacher_payroll
 create or replace function public.finance_capture_audit()
 returns trigger
 language plpgsql
-security invoker
+security definer
 set search_path = public, pg_temp
 as $$
 declare
