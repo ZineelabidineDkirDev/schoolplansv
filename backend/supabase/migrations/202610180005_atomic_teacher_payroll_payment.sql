@@ -124,6 +124,12 @@ begin
   if not found then
     raise exception 'Caisse ou compte bancaire introuvable ou inactif.';
   end if;
+  if p_payment_method = 'cash' and v_account_type <> 'cash' then
+    raise exception 'Pour un paiement en espèces, sélectionnez une caisse.';
+  end if;
+  if p_payment_method in ('bank_transfer','card','cheque') and v_account_type <> 'bank' then
+    raise exception 'Pour ce mode de paiement, sélectionnez un compte bancaire.';
+  end if;
 
   select a.opening_balance + coalesce(sum(
     case
@@ -318,6 +324,8 @@ begin
       check (validation_status in ('pending','approved','rejected'));
   end if;
 end $$;
+
+alter table public.seances_realisees alter column submitted_by set default auth.uid();
 
 alter table public.seances_realisees enable row level security;
 
