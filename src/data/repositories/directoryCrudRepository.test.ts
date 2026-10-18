@@ -14,8 +14,10 @@ function clientFor(options: { singles?: Record<string, unknown>; lists?: Record<
     }
     query.single = vi.fn(async () => ({ data: options.singles?.[table] ?? { id: 7 }, error: null }));
     query.maybeSingle = vi.fn(async () => ({ data: options.singles?.[table] ?? { id: 7 }, error: null }));
-    query.then = (resolve: (value: unknown) => unknown) =>
-      Promise.resolve({ data: options.lists?.[table] ?? [], error: null }).then(resolve);
+    query.then = (...args: unknown[]) => {
+      const resolve = args[0] as ((value: unknown) => unknown) | undefined;
+      return Promise.resolve({ data: options.lists?.[table] ?? [], error: null }).then(resolve);
+    };
     return query;
   });
   return { client: { from } as unknown as SupabaseClient, calls, from };

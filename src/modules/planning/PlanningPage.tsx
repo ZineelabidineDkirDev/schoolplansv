@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState, type FormEvent, type MouseEvent } from 'react';
-import { Alert, Button, EmptyState, LoadingState, PageHeader, Panel } from '../../components/ui';
+import { Alert, Button, EmptyState, LoadingState, PageHeader, Panel, confirmAction, notify } from '../../components/ui';
 import {
   addDays,
   formatTime,
@@ -34,7 +34,7 @@ type PageState =
   | { status: 'error'; message: string }
   | { status: 'loaded'; data: PlanningData };
 
-type PlanningRole = 'admin' | 'director' | 'super_admin' | 'formateur';
+type PlanningRole = 'admin' | 'director' | 'super_admin' | 'formateur' | 'etudiant';
 
 type EditorState = {
   courseId?: StudentIdentifier;
@@ -66,7 +66,7 @@ function errorMessage(error: unknown): string {
 }
 
 function getPlanningRole(role: string): PlanningRole | null {
-  return role === 'admin' || role === 'director' || role === 'super_admin' || role === 'formateur'
+  return role === 'admin' || role === 'director' || role === 'super_admin' || role === 'formateur' || role === 'etudiant'
     ? role
     : null;
 }
@@ -147,7 +147,8 @@ function isCourseFilterMatch(
 }
 
 export function PlanningPage({ view = 'planning' }: { view?: 'planning' | 'sessions' }) {
-  const { profile, permissions } = useAuth();
+  const { profile, permissions, session } = useAuth();
+  const isStudent = profile?.role === 'etudiant';
   const [reloadKey, setReloadKey] = useState(0);
   const [state, setState] = useState<PageState>({ status: 'loading' });
   const [week, setWeek] = useState(() => getMonday(new Date()));
@@ -183,6 +184,7 @@ export function PlanningPage({ view = 'planning' }: { view?: 'planning' | 'sessi
           profile?.centreId ?? '',
           profile?.id ?? '',
           role,
+          session?.user.email ?? '',
         );
         if (active) setState({ status: 'loaded', data });
       } catch (error) {
@@ -194,19 +196,18 @@ export function PlanningPage({ view = 'planning' }: { view?: 'planning' | 'sessi
     return () => {
       active = false;
     };
-  }, [profile?.centreId, profile?.id, profile?.role, reloadKey]);
+  }, [profile?.centreId, profile?.id, profile?.role, session?.user.email, reloadKey]);
 
   const data = state.status === 'loaded' ? state.data : null;
-  const formationProgresses = useMemo(
-    () =>
-      data
-        ? data.filters.formations.flatMap((formation) => {
-            const progress = calculateFormationProgress(data, String(formation.id));
-            return progress ? [{ formation, progress }] : [];
-          })
-        : [],
-    [data],
-  );
+  const formationProgresses = useMemo(() => {
+    if (!data || !filters.formationId) return [];
+    const formation = data.filters.formations.find(
+      (item) => String(item.id) === filters.formationId,
+    );
+    if (!formation) return [];
+    const progress = calculateFormationProgress(data, filters.formationId);
+    return progress ? [{ formation, progress }] : [];
+  }, [data, filters.formationId]);
   const allOccurrences = useMemo(
     () =>
       data
@@ -290,9 +291,9 @@ export function PlanningPage({ view = 'planning' }: { view?: 'planning' | 'sessi
   )?.name;
   const teacherId =
     profile?.role === 'formateur' ? (data?.filters.teachers[0]?.id.toString() ?? null) : null;
-  const actorRole = profile ? getPlanningRole(profile.role) : null;
+  const actorRole = profile && profile.role !== 'etudiant' ? getPlanningRole(profile.role) : null;
   const actor = {
-    role: actorRole ?? 'super_admin',
+    role: actorRole && actorRole !== 'etudiant' ? actorRole : 'super_admin',
     teacherId,
     centreId: profile?.centreId ?? null,
   } as const;
@@ -372,10 +373,12 @@ export function PlanningPage({ view = 'planning' }: { view?: 'planning' | 'sessi
     try {
       await action();
       setActionMessage(success);
+      notify(success, 'success');
       setReloadKey((key) => key + 1);
       if (close) setEditor(null);
     } catch (error) {
       setActionError(errorMessage(error));
+      notify(errorMessage(error), 'error');
     } finally {
       setSaving(false);
     }
@@ -402,7 +405,7 @@ export function PlanningPage({ view = 'planning' }: { view?: 'planning' | 'sessi
   }
 
   async function deleteCourse() {
-    if (!editor?.courseId || !window.confirm('Supprimer ce cours ?')) return;
+    if (!editor?.courseId || !await confirmAction('Supprimer ce cours ?')) return;
     await performAction(
       () => deletePlanningCourse(getSupabaseClient(), actor, editor.courseId!),
       'Cours supprimé.',
@@ -414,7 +417,7 @@ export function PlanningPage({ view = 'planning' }: { view?: 'planning' | 'sessi
     const cancelling = !editor.cancelled;
     const dateLabel = editor.occurrenceDate.split('-').reverse().join('/');
     if (
-      !window.confirm(
+      !await confirmAction(
         cancelling ? `Annuler la séance du ${dateLabel} ?` : `Rétablir la séance du ${dateLabel} ?`,
       )
     ) {
@@ -436,7 +439,7 @@ export function PlanningPage({ view = 'planning' }: { view?: 'planning' | 'sessi
   async function completeOccurrence() {
     if (!editor?.courseId) return;
     const dateLabel = editor.occurrenceDate.split('-').reverse().join('/');
-    if (!window.confirm(`Confirmer que la séance du ${dateLabel} est terminée ?`)) return;
+    if (!await confirmAction(`Confirmer que la séance du ${dateLabel} est terminée ?`)) return;
     await performAction(
       () =>
         markPlanningOccurrenceCompleted(
@@ -469,9 +472,11 @@ export function PlanningPage({ view = 'planning' }: { view?: 'planning' | 'sessi
       setClosureDate('');
       setClosureLabel('');
       setClosureMessage('Jour fermé ajouté.');
+      notify('Jour fermé ajouté.', 'success');
       setReloadKey((key) => key + 1);
     } catch (error) {
       setClosureError(errorMessage(error));
+      notify(errorMessage(error), 'error');
     } finally {
       setSaving(false);
     }
@@ -479,12 +484,14 @@ export function PlanningPage({ view = 'planning' }: { view?: 'planning' | 'sessi
 
   async function removeClosure(date: string) {
     if (!profile || !canManageClosures) return;
+    if (!await confirmAction(`Retirer la fermeture du ${date.split('-').reverse().join('/')} ?`)) return;
     setSaving(true);
     setClosureError(null);
     setClosureMessage(null);
     try {
       await deletePlanningClosure(getSupabaseClient(), actor, date);
       setClosureMessage('Jour fermé retiré.');
+      notify('Jour fermé retiré.', 'success');
       setReloadKey((key) => key + 1);
     } catch (error) {
       setClosureError(errorMessage(error));
@@ -825,10 +832,12 @@ export function PlanningPage({ view = 'planning' }: { view?: 'planning' | 'sessi
         }
         description={
           view === 'planning'
-            ? 'Semaine type, répétée chaque semaine, avec les séances prévues pour votre centre.'
+            ? isStudent
+              ? 'Votre calendrier de cours et de formateurs, en consultation uniquement.'
+              : 'Semaine type, répétée chaque semaine, avec les séances prévues pour votre centre.'
             : 'Liste des séances prévues pendant la semaine sélectionnée.'
         }
-        eyebrow={profile?.role === 'formateur' ? 'Espace formateur' : 'Gestion du centre'}
+        eyebrow={isStudent ? 'Espace étudiant' : profile?.role === 'formateur' ? 'Espace formateur' : 'Gestion du centre'}
         title={heading}
       />
 
@@ -856,15 +865,15 @@ export function PlanningPage({ view = 'planning' }: { view?: 'planning' | 'sessi
 
       {data && (
         <>
-          {renderFilters()}
+          {!isStudent && renderFilters()}
           {view === 'planning' && formationProgresses.length > 0 && (
-            <section aria-label="Progression de toutes les formations" className="space-y-3">
+            <section aria-label="Progression de la formation sélectionnée" className="space-y-3">
               <header className="planning-progress-section-heading">
                 <div>
                   <p className="planning-progress-eyebrow">Suivi pédagogique</p>
                   <h2>Progression de la formation</h2>
                 </div>
-                <span>{formationProgresses.length} formations</span>
+                <span>1 formation sélectionnée</span>
               </header>
               <div className="planning-progress-grid">
                 {formationProgresses.map(({ formation, progress }) => (

@@ -12,6 +12,7 @@ import { ForcedPasswordChange } from './ForcedPasswordChange';
 import { PendingAccess } from './PendingAccess';
 import { MyStudentsPage } from '../students/MyStudentsPage';
 import { DashboardPage } from '../dashboard/DashboardPage';
+import { RapportCentrePage } from '../dashboard/RapportCentrePage';
 import { PlanningPage } from '../planning/PlanningPage';
 import { Alert, Button, LoadingState, ThemeToggle } from '../../components/ui';
 import { CentreManagementPage } from '../centres/CentreManagementPage';
@@ -26,6 +27,7 @@ import {
 import { CentreProfilePage } from '../management/CentreProfilePage';
 import { CertificatesPage } from '../management/CertificatesPage';
 import { HistoryPage } from '../management/HistoryPage';
+import { FinanceDashboardPage } from '../finance/FinanceDashboardPage';
 import { SupportsPage } from '../management/SupportsPage';
 import { StudentWorkspacePage } from '../students/StudentWorkspacePage';
 import type { AppSection } from '../../types/auth';
@@ -191,66 +193,6 @@ function ApplicationShell() {
           <b className="sp-app-brand-mark">I</b>
           <span>SchoolPlans</span>
         </Link>
-        {['super_admin', 'admin', 'director'].includes(profile.role) && (
-          <div className="flex min-w-0 flex-wrap items-center gap-3 rounded-xl border border-white/15 bg-white/10 px-3 py-2 text-white">
-            <div className="grid h-11 w-11 shrink-0 place-items-center overflow-hidden rounded-lg bg-white">
-              {activeCentre?.logo_url ? (
-                <img alt={`Logo de ${activeCentre.nom}`} className="h-full w-full object-contain" src={activeCentre.logo_url} />
-              ) : (
-                <span aria-hidden="true" className="text-xl">🏫</span>
-              )}
-            </div>
-            <div className="flex min-w-0 flex-col gap-1">
-              <strong className="max-w-[220px] truncate text-sm">{activeCentre?.nom ?? (centresLoading ? 'Chargement du centre…' : 'Centre non défini')}</strong>
-              <div className="flex flex-wrap items-center gap-2 text-xs">
-                {activeCentre && (
-                  <span className={activeCentre.actif ? 'rounded-full bg-emerald-400/20 px-2 py-0.5 text-emerald-100' : 'rounded-full bg-rose-400/20 px-2 py-0.5 text-rose-100'}>
-                    {activeCentre.actif ? 'Centre actif' : 'Centre suspendu'}
-                  </span>
-                )}
-                {activeCentre?.type_abonnement && <span>Pack : <b>{activeCentre.type_abonnement}</b></span>}
-                {activeCentre?.statut_abonnement && <span>Abonnement : <b>{activeCentre.statut_abonnement}</b></span>}
-                {activeCentre?.date_expiration && (() => {
-                  const today = new Date();
-                  const localToday = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
-                  const days = Math.round((new Date(`${activeCentre.date_expiration}T12:00:00`).getTime() - new Date(`${localToday}T12:00:00`).getTime()) / 86400000);
-                  return (
-                    <span className={days < 0 ? 'font-bold text-rose-200' : days <= 30 ? 'font-bold text-amber-200' : 'text-white/90'}>
-                      Expiration : {activeCentre.date_expiration.split('-').reverse().join('/')} ({days < 0 ? `expiré depuis ${-days} j` : days === 0 ? 'expire aujourd’hui' : `${days} j restants`})
-                    </span>
-                  );
-                })()}
-                {!activeCentre?.type_abonnement && !activeCentre?.statut_abonnement && !activeCentre?.date_expiration && (
-                  <span className="text-white/75">Abonnement non défini</span>
-                )}
-              </div>
-            </div>
-            {profile.role === 'super_admin' && (
-          <div className="flex min-w-0 flex-wrap items-center gap-2 rounded-xl border border-white/15 bg-white/10 px-3 py-2">
-            <label className="whitespace-nowrap text-xs font-semibold text-white" htmlFor="sp-centre-select">
-              Centre actif
-            </label>
-            <select
-              className="min-h-9 max-w-[220px] min-w-[150px] rounded-lg border border-slate-300 bg-white px-2 text-sm font-semibold text-slate-900"
-              disabled={centresLoading || centres.length === 0}
-              id="sp-centre-select"
-              onChange={(event) => setActiveCentreId(event.target.value || null)}
-              value={profile.centreId ?? ''}
-            >
-              {centres.length === 0 && <option value="">Aucun centre actif</option>}
-              {centres.map((centre) => (
-                <option key={centre.id} value={centre.id}>
-                  {centre.nom}
-                </option>
-              ))}
-            </select>
-            {centresError && (
-              <small className="w-full text-xs text-red-200">{centresError}</small>
-            )}
-          </div>
-            )}
-          </div>
-        )}
         <div aria-label="Utilisateur connecté" className="sp-user">
           <strong>{profile.fullName || session?.user.email}</strong>
           <small>{getRoleLabel(profile.role)}</small>
@@ -275,6 +217,72 @@ function ApplicationShell() {
           Déconnexion
         </Button>
       </header>
+        {['super_admin', 'admin', 'director'].includes(profile.role) && (
+          <div aria-label="Informations du centre actif" className="sp-centre-banner" tabIndex={0}>
+            <div className="sp-centre-banner-logo">
+              {activeCentre?.logo_url ? (
+                <img alt={`Logo de ${activeCentre.nom}`} src={activeCentre.logo_url} />
+              ) : (
+                <span aria-hidden="true">⌂</span>
+              )}
+            </div>
+            <div className="sp-centre-banner-content">
+              <div className="sp-centre-banner-heading">
+                <span className="sp-centre-banner-eyebrow">Centre actif</span>
+                <strong title={activeCentre?.nom ?? undefined}>
+                  {activeCentre?.nom ?? (centresLoading ? 'Chargement du centre…' : 'Centre non défini')}
+                </strong>
+                {activeCentre && (
+                  <span className={`sp-centre-pill ${activeCentre.actif ? 'is-active' : 'is-suspended'}`}>
+                    <span aria-hidden="true" className="sp-centre-pill-dot" />
+                    {activeCentre.actif ? 'Actif' : 'Suspendu'}
+                  </span>
+                )}
+              </div>
+              <div className="sp-centre-banner-meta">
+                {activeCentre?.type_abonnement && (
+                  <span><small>Pack</small><b>{activeCentre.type_abonnement}</b></span>
+                )}
+                {activeCentre?.statut_abonnement && (
+                  <span><small>Abonnement</small><b>{activeCentre.statut_abonnement}</b></span>
+                )}
+                {activeCentre?.date_expiration && (() => {
+                  const today = new Date();
+                  const localToday = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
+                  const days = Math.round((new Date(`${activeCentre.date_expiration}T12:00:00`).getTime() - new Date(`${localToday}T12:00:00`).getTime()) / 86400000);
+                  return (
+                    <span className={days < 0 ? 'is-expired' : days <= 30 ? 'is-expiring' : ''}>
+                      <small>Expiration</small>
+                      <b>{activeCentre.date_expiration.split('-').reverse().join('/')}</b>
+                      <em>{days < 0 ? `Expiré depuis ${-days} j` : days === 0 ? 'Expire aujourd’hui' : `${days} j restants`}</em>
+                    </span>
+                  );
+                })()}
+                {!activeCentre?.type_abonnement && !activeCentre?.statut_abonnement && !activeCentre?.date_expiration && (
+                  <span className="sp-centre-no-subscription">Abonnement non défini</span>
+                )}
+              </div>
+            </div>
+            {profile.role === 'super_admin' && (
+              <div className="sp-centre-switcher">
+                <label htmlFor="sp-centre-select">Changer de centre</label>
+                <select
+                  disabled={centresLoading || centres.length === 0}
+                  id="sp-centre-select"
+                  onChange={(event) => setActiveCentreId(event.target.value || null)}
+                  value={profile.centreId ?? ''}
+                >
+                  {centres.length === 0 && <option value="">Aucun centre actif</option>}
+                  {centres.map((centre) => (
+                    <option key={centre.id} value={centre.id}>{centre.nom}</option>
+                  ))}
+                </select>
+                {centresError && <small className="sp-centre-banner-error">{centresError}</small>}
+              </div>
+            )}
+          </div>
+        )}
+
 
       <div className="sp-app-wrap">
         <nav aria-label="Navigation principale" className="sp-app-nav">
@@ -335,6 +343,8 @@ function NavIcon({ section }: { section: AppSection | 'home' }) {
     home: 'm4 11 8-7 8 7v9h-5v-6H9v6H4z',
     vcal: 'M4 5h16v15H4zM8 3v4m8-4v4M4 10h16',
     vd: 'M4 20V4m0 16h16M8 16v-5m4 5V8m4 8v-3',
+    vrapport: 'M4 19V5m0 14h16M8 15l3-4 3 2 5-7',
+    vfinance: 'M3 7h18v13H3zM7 7V4h10v3m-14 4h18m-10 0v3',
     vl: 'M5 4h14v16H5zM8 8h8m-8 4h8m-8 4h5',
     vr: 'M4 20h16M6 20V5h12v15M9 9h2m2 0h2m-6 4h2m2 0h2m-4 7v-4h3v4',
     vk: 'M5 4h14v16H5zM8 8h8m-8 4h8m-8 4h5',
@@ -363,6 +373,11 @@ export function SectionPlaceholder() {
   const { section } = useParams();
   const { profile, permissions } = useAuth();
 
+  // Les étudiants ont des vues personnelles en lecture seule pour le planning et les salles.
+  if (profile?.role === 'etudiant' && section === 'vl') {
+    return <Navigate replace to="/app/vm" />;
+  }
+
   if (!profile || !section || !canAccessSection(profile.role, section, permissions)) {
     return (
       <section className="sp-page">
@@ -376,11 +391,13 @@ export function SectionPlaceholder() {
 
   if (section === 'vn') return <MyStudentsPage />;
   if (section === 'vd') return <DashboardPage />;
+  if (section === 'vrapport') return profile?.role === 'etudiant' ? <StudentWorkspacePage view="report" /> : <RapportCentrePage />;
+  if (section === 'vfinance') return <FinanceDashboardPage />;
   if (section === 'vcal') return <PlanningPage />;
   if (section === 'vl') return <PlanningPage view="sessions" />;
   if (section === 'vi') return <EnrollmentRequestsPage />;
   if (section === 'vz') return <CentreManagementPage />;
-  if (section === 'vr') return <RoomsPage />;
+  if (section === 'vr') return profile?.role === 'etudiant' ? <StudentWorkspacePage view="rooms" /> : <RoomsPage />;
   if (section === 'vf') return <TeachersPage />;
   if (section === 'vp') return <AttendancePage />;
   if (section === 'vs') return <StudentsPage />;

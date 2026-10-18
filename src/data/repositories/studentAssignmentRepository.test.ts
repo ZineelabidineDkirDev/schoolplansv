@@ -21,8 +21,10 @@ function createClient(options: {
       data: options.single?.[table] ?? null,
       error: null,
     }));
-    query.then = (resolve: (value: Result) => unknown) =>
-      Promise.resolve({ data: options.lists?.[table] ?? [], error: null }).then(resolve);
+    query.then = (...args: unknown[]) => {
+      const resolve = args[0] as ((value: Result) => unknown) | undefined;
+      return Promise.resolve({ data: options.lists?.[table] ?? [], error: null }).then(resolve);
+    };
     return query;
   });
   return { client: { from } as unknown as SupabaseClient, calls, from };

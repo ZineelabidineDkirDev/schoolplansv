@@ -10,6 +10,8 @@ import {
   PageHeader,
   Panel,
   StatusBadge,
+  confirmAction,
+  notify,
 } from '../../components/ui';
 import { invokeCentreDirectorAccess } from '../../data/repositories/edgeFunctionRepository';
 import { getSupabaseClient } from '../../data/supabase/client';
@@ -180,7 +182,11 @@ export function CentreManagementPage() {
   const [form, setForm] = useState<CentreForm>(emptyForm);
   const [formOpen, setFormOpen] = useState(false);
   const [saving, setSaving] = useState(false);
-  const [message, setMessage] = useState<{ tone: 'success' | 'error' | 'warning'; text: string } | null>(null);
+  const [message, setMessageState] = useState<{ tone: 'success' | 'error' | 'warning'; text: string } | null>(null);
+  const setMessage = (value: { tone: 'success' | 'error' | 'warning'; text: string } | null) => {
+    setMessageState(value);
+    if (value) notify(value.text, value.tone === 'error' ? 'error' : value.tone === 'warning' ? 'info' : 'success');
+  };
   const [selectedCentre, setSelectedCentre] = useState<Centre | null>(null);
   const [configCentre, setConfigCentre] = useState<Centre | null>(null);
   const [configForm, setConfigForm] = useState<CentreConfigForm>({
@@ -321,7 +327,7 @@ export function CentreManagementPage() {
   async function toggleCentre(centre: Centre) {
     const action = centre.active ? 'suspendre' : 'réactiver';
     if (
-      !window.confirm(`${action === 'suspendre' ? 'Suspendre' : 'Réactiver'} « ${centre.name} » ?`)
+      !await confirmAction(`${action === 'suspendre' ? 'Suspendre' : 'Réactiver'} « ${centre.name} » ?`)
     ) {
       return;
     }

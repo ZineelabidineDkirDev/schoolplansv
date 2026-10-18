@@ -1,5 +1,5 @@
 import { useEffect, useState, type FormEvent } from 'react';
-import { Alert, Button, EmptyState, LoadingState, PageHeader, Panel } from '../../components/ui';
+import { Alert, Button, EmptyState, LoadingState, PageHeader, Panel, notify } from '../../components/ui';
 import {
   approveEnrollmentRequest,
   getEnrollmentRequests,
@@ -46,7 +46,11 @@ export function EnrollmentRequestsPage() {
   const [reloadKey, setReloadKey] = useState(0);
   const [state, setState] = useState<PageState>({ status: 'loading' });
   const [processingId, setProcessingId] = useState<string | null>(null);
-  const [message, setMessage] = useState<string | null>(null);
+  const [message, setMessageState] = useState<string | null>(null);
+  const setMessage = (value: string | null) => {
+    setMessageState(value);
+    if (value) notify(value, 'success');
+  };
   const [actionError, setActionError] = useState<string | null>(null);
   const [requestToReject, setRequestToReject] = useState<EnrollmentRequest | null>(null);
   const [refusalReason, setRefusalReason] = useState('');

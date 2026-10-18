@@ -1,0 +1,337 @@
+import { useCallback, useEffect, useState, type FormEvent, type ReactNode } from 'react';
+import { Alert, Button, LoadingState } from '../../components/ui';
+import { getSupabaseClient } from '../../data/supabase/client';
+import { useAuth } from '../auth/AuthProvider';
+import { FinanceOperations } from './FinanceOperations';
+
+type Student = { id: number; prenom: string; nom: string };
+type Teacher = { id: number; nom: string };
+type TeacherAdvance = { id: string; teacher_id: number; amount: number | string; advance_date: string; notes: string | null; status: string };
+type AdvanceRepayment = { teacher_id: number; amount: number | string; status: string };
+type Charge = { id: string; student_id: number; label: string; amount_due: number | string; due_date: string | null; status: string; notes: string | null };
+type Payment = { id: string; charge_id: string; amount: number | string; payment_method: string; receipt_number: string; paid_at: string; reference?: string | null; notes?: string | null };
+type Payroll = { id: string; teacher_id: number; period_start: string; period_end: string; hours: number | string; hourly_rate: number | string; compensation_mode?: string; session_count?: number | string; session_rate?: number | string; monthly_salary?: number | string; gross_amount?: number | string; advance_deduction?: number | string; amount_due: number | string; status: string; paid_at: string | null; notes: string | null };
+type Summary = { charges: number; collected: number; expenses: number; payrollDue: number; chargeCount: number; expenseCount: number; payrollCount: number };
+const EMPTY: Summary = { charges: 0, collected: 0, expenses: 0, payrollDue: 0, chargeCount: 0, expenseCount: 0, payrollCount: 0 };
+const METHODS = [{ value: 'cash', label: 'Espèces' }, { value: 'bank_transfer', label: 'Virement bancaire' }, { value: 'card', label: 'Carte bancaire' }, { value: 'cheque', label: 'Chèque' }, { value: 'other', label: 'Autre' }];
+const money = (value: number) => new Intl.NumberFormat('fr-MA', { style: 'currency', currency: 'MAD', maximumFractionDigits: 2 }).format(value);
+const numeric = (value: number | string | null | undefined) => { const n = Number(value ?? 0); return Number.isFinite(n) ? n : 0; };
+const today = () => new Date().toISOString().slice(0, 10);
+
+function readableFinanceError(cause: unknown, fallback: string): string {
+  if (cause && typeof cause === 'object' && 'message' in cause && typeof cause.message === 'string') {
+    const details = 'details' in cause && typeof cause.details === 'string' ? cause.details : '';
+    const code = 'code' in cause && typeof cause.code === 'string' ? ' [' + cause.code + ']' : '';
+    return cause.message + code + (details ? ' — ' + details : '');
+  }
+  return cause instanceof Error ? cause.message : fallback;
+}
+
+
+function Popup({ title, onClose, children }: { title: string; onClose: () => void; children: ReactNode }) {
+  return <div className="finance-modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}>
+    <section aria-modal="true" className="finance-modal" role="dialog" aria-labelledby="finance-modal-title">
+      <header className="finance-modal-header"><div><p className="sp-page-eyebrow">Tableau de bord financier</p><h2 id="finance-modal-title">{title}</h2></div><button type="button" className="finance-modal-close" aria-label="Fermer" onClick={onClose}>×</button></header>
+      {children}
+    </section>
+  </div>;
+}
+
+export function FinanceDashboardPage() {
+  const { profile } = useAuth();
+  const [summary, setSummary] = useState<Summary>(EMPTY);
+  const [students, setStudents] = useState<Student[]>([]);
+  const [teachers, setTeachers] = useState<Teacher[]>([]);
+  const [charges, setCharges] = useState<Charge[]>([]);
+  const [payments, setPayments] = useState<Payment[]>([]);
+  const [payroll, setPayroll] = useState<Payroll[]>([]);
+  const [advances, setAdvances] = useState<TeacherAdvance[]>([]);
+  const [advanceRepayments, setAdvanceRepayments] = useState<AdvanceRepayment[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
+  const [reloadKey, setReloadKey] = useState(0);
+  const [view, setView] = useState<'students' | 'expenses' | 'receipts' | 'payroll'>('students');
+  const [modal, setModal] = useState<'charge' | 'payment' | 'payroll' | 'advance' | null>(null);
+  const [editingChargeId, setEditingChargeId] = useState<string | null>(null);
+  const [editingPayrollId, setEditingPayrollId] = useState<string | null>(null);
+  const [chargeForm, setChargeForm] = useState({ studentId: '', label: 'Frais de scolarité', amount: '', dueDate: '', notes: '' });
+  const [paymentForm, setPaymentForm] = useState({ chargeId: '', amount: '', method: 'cash', reference: '', notes: '' });
+  const [payrollForm, setPayrollForm] = useState({ teacherId: '', periodStart: today().slice(0, 8) + '01', periodEnd: today(), compensationMode: 'hourly', hours: '', hourlyRate: '', sessionCount: '', sessionRate: '', monthlySalary: '', advanceDeduction: '', notes: '' });
+  const [advanceForm, setAdvanceForm] = useState({ teacherId: '', amount: '', advanceDate: today(), notes: '' });
+  const reload = useCallback(() => setReloadKey((value) => value + 1), []);
+
+  useEffect(() => {
+    let active = true;
+    async function load() {
+      if (!profile?.centreId) { setError('Votre compte n’est pas rattaché à un établissement.'); setLoading(false); return; }
+      setLoading(true); setError(null);
+      try {
+        const client = getSupabaseClient();
+        const results = await Promise.all([
+          client.from('etudiants').select('id,prenom,nom').eq('centre_id', profile.centreId).order('nom'),
+          client.from('formateurs').select('id,nom').eq('centre_id', profile.centreId).order('nom'),
+          client.from('finance_student_charges').select('id,student_id,label,amount_due,due_date,status,notes').eq('centre_id', profile.centreId).neq('status', 'cancelled').order('created_at', { ascending: false }),
+          client.from('finance_payments').select('id,charge_id,amount,payment_method,receipt_number,paid_at,reference,notes').eq('centre_id', profile.centreId).order('paid_at', { ascending: false }),
+          client.from('finance_expenses').select('amount').eq('centre_id', profile.centreId).eq('status', 'paid'),
+          client.from('finance_teacher_payroll').select('id,teacher_id,period_start,period_end,hours,hourly_rate,compensation_mode,session_count,session_rate,monthly_salary,gross_amount,advance_deduction,amount_due,status,paid_at,notes').eq('centre_id', profile.centreId).neq('status', 'cancelled').order('period_start', { ascending: false }),
+          client.from('finance_teacher_advances').select('id,teacher_id,amount,advance_date,notes,status').eq('centre_id', profile.centreId).order('advance_date', { ascending: false }),
+          client.from('finance_teacher_advance_repayments').select('teacher_id,amount,status').eq('centre_id', profile.centreId).eq('status', 'active'),
+        ]);
+        const failed = results.find((result) => result.error);
+        if (failed?.error) throw failed.error;
+        const nextCharges = (results[2].data ?? []) as Charge[];
+        const nextPayments = (results[3].data ?? []) as Payment[];
+        const expenses = (results[4].data ?? []) as { amount: number | string }[];
+        const nextPayroll = (results[5].data ?? []) as Payroll[];
+        const nextAdvances = (results[6].data ?? []) as TeacherAdvance[];
+        const nextRepayments = (results[7].data ?? []) as AdvanceRepayment[];
+        const nextSummary: Summary = {
+          charges: nextCharges.reduce((sum, row) => sum + numeric(row.amount_due), 0),
+          collected: nextPayments.reduce((sum, row) => sum + numeric(row.amount), 0),
+          expenses: expenses.reduce((sum, row) => sum + numeric(row.amount), 0),
+          payrollDue: nextPayroll.filter((row) => row.status === 'approved').reduce((sum, row) => sum + numeric(row.amount_due), 0),
+          chargeCount: nextCharges.length, expenseCount: expenses.length,
+          payrollCount: nextPayroll.filter((row) => row.status === 'approved').length,
+        };
+        if (active) {
+          setStudents((results[0].data ?? []) as Student[]);
+          setTeachers((results[1].data ?? []) as Teacher[]);
+          setCharges(nextCharges); setPayments(nextPayments); setPayroll(nextPayroll); setAdvances(nextAdvances); setAdvanceRepayments(nextRepayments); setSummary(nextSummary);
+          setPaymentForm((current) => ({ ...current, chargeId: nextCharges.find((charge) => ['open', 'partial'].includes(charge.status))?.id ?? current.chargeId }));
+        }
+      } catch (cause) { if (active) setError(readableFinanceError(cause, 'Impossible de charger les données financières.')); }
+      finally { if (active) setLoading(false); }
+    }
+    void load();
+    return () => { active = false; };
+  }, [profile?.centreId, reloadKey]);
+
+  const studentName = (id: number) => { const student = students.find((item) => Number(item.id) === Number(id)); return student ? (student.prenom + ' ' + student.nom).trim() : 'Étudiant #' + id; };
+  const teacherName = (id: number) => { const teacher = teachers.find((item) => Number(item.id) === Number(id)); return teacher ? teacher.nom : 'Formateur #' + id; };
+  const advanceBalance = (teacherId: number) => Math.max(0, advances.filter((item) => Number(item.teacher_id) === Number(teacherId) && item.status === 'active').reduce((sum, item) => sum + numeric(item.amount), 0) - advanceRepayments.filter((item) => Number(item.teacher_id) === Number(teacherId) && item.status === 'active').reduce((sum, item) => sum + numeric(item.amount), 0));
+  const payrollGross = payrollForm.compensationMode === 'session' ? numeric(payrollForm.sessionCount) * numeric(payrollForm.sessionRate) : payrollForm.compensationMode === 'monthly' ? numeric(payrollForm.monthlySalary) : numeric(payrollForm.hours) * numeric(payrollForm.hourlyRate);
+  const payrollNet = Math.max(0, payrollGross - numeric(payrollForm.advanceDeduction));
+  const paidForCharge = (chargeId: string) => payments.filter((payment) => payment.charge_id === chargeId).reduce((sum, payment) => sum + numeric(payment.amount), 0);
+  const outstanding = Math.max(0, summary.charges - summary.collected);
+
+  function openCharge(charge?: Charge) {
+    setError(null); setEditingChargeId(charge?.id ?? null);
+    setChargeForm(charge ? { studentId: String(charge.student_id), label: charge.label, amount: String(charge.amount_due), dueDate: charge.due_date ?? '', notes: charge.notes ?? '' } : { studentId: '', label: 'Frais de scolarité', amount: '', dueDate: '', notes: '' });
+    setModal('charge');
+  }
+  function openPayroll(item?: Payroll) {
+    setError(null); setEditingPayrollId(item?.id ?? null);
+    setPayrollForm(item ? { teacherId: String(item.teacher_id), periodStart: item.period_start, periodEnd: item.period_end, compensationMode: item.compensation_mode ?? 'hourly', hours: String(item.hours), hourlyRate: String(item.hourly_rate), sessionCount: String(item.session_count ?? 0), sessionRate: String(item.session_rate ?? 0), monthlySalary: String(item.monthly_salary ?? 0), advanceDeduction: String(item.advance_deduction ?? 0), notes: item.notes ?? '' } : { teacherId: '', periodStart: today().slice(0, 8) + '01', periodEnd: today(), compensationMode: 'hourly', hours: '', hourlyRate: '', sessionCount: '', sessionRate: '', monthlySalary: '', advanceDeduction: '', notes: '' });
+    setModal('payroll');
+  }
+
+  async function saveCharge(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault(); if (!profile?.centreId) return;
+    const amountDue = Number(chargeForm.amount);
+    if (!chargeForm.studentId || !chargeForm.label.trim() || !Number.isFinite(amountDue) || amountDue <= 0) { setError('Choisissez un étudiant et saisissez un montant supérieur à 0 DH.'); return; }
+    if (editingChargeId && amountDue < paidForCharge(editingChargeId)) { setError('Le montant ne peut pas être inférieur aux paiements déjà reçus.'); return; }
+    setSaving(true); setError(null); setNotice(null);
+    try {
+      const client = getSupabaseClient();
+      const alreadyCollected = editingChargeId ? paidForCharge(editingChargeId) : 0;
+      const nextStatus = alreadyCollected >= amountDue ? 'paid' : alreadyCollected > 0 ? 'partial' : 'open';
+      const payload = { student_id: Number(chargeForm.studentId), label: chargeForm.label.trim(), amount_due: amountDue, due_date: chargeForm.dueDate || null, notes: chargeForm.notes.trim() || null, status: nextStatus, updated_at: new Date().toISOString() };
+      const result = editingChargeId
+        ? await client.from('finance_student_charges').update(payload).eq('id', editingChargeId).eq('centre_id', profile.centreId)
+        : await client.from('finance_student_charges').insert({ ...payload, centre_id: profile.centreId, created_by: profile.id });
+      if (result.error) throw result.error;
+      setNotice(editingChargeId ? 'Frais modifié.' : 'Frais enregistré.');
+      setModal(null); reload();
+    } catch (cause) { setError(readableFinanceError(cause, 'Impossible d’enregistrer les frais.')); }
+    finally { setSaving(false); }
+  }
+
+  async function cancelCharge(charge: Charge) {
+    if (!profile?.centreId || !window.confirm('Annuler les frais « ' + charge.label + ' » ? Les paiements existants seront conservés.')) return;
+    setSaving(true); setError(null); setNotice(null);
+    try {
+      const { error } = await getSupabaseClient().from('finance_student_charges').update({ status: 'cancelled', updated_at: new Date().toISOString() }).eq('id', charge.id).eq('centre_id', profile.centreId);
+      if (error) throw error;
+      setNotice('Frais annulé. L’historique des paiements est conservé.'); reload();
+    } catch (cause) { setError(readableFinanceError(cause, 'Impossible d’annuler les frais.')); }
+    finally { setSaving(false); }
+  }
+
+  async function recordPayment(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault(); if (!profile?.centreId) return;
+    const charge = charges.find((item) => item.id === paymentForm.chargeId);
+    const paidAmount = Number(paymentForm.amount);
+    if (!charge || !Number.isFinite(paidAmount) || paidAmount <= 0) { setError('Sélectionnez des frais et saisissez un paiement supérieur à 0 DH.'); return; }
+    const alreadyPaid = paidForCharge(charge.id);
+    const remaining = Math.max(0, numeric(charge.amount_due) - alreadyPaid);
+    if (paidAmount > remaining + 0.001) { setError('Le paiement dépasse le reste dû (' + money(remaining) + ').'); return; }
+    setSaving(true); setError(null); setNotice(null);
+    try {
+      const receipt = 'REC-' + new Date().toISOString().replace(/[-:TZ.]/g, '').slice(0, 14) + '-' + Math.random().toString(36).slice(2, 6).toUpperCase();
+      const client = getSupabaseClient();
+      const { error: paymentError } = await client.from('finance_payments').insert({ centre_id: profile.centreId, charge_id: charge.id, amount: paidAmount, payment_method: paymentForm.method, receipt_number: receipt, reference: paymentForm.reference.trim() || null, notes: paymentForm.notes.trim() || null, created_by: profile.id });
+      if (paymentError) throw paymentError;
+      const newTotal = alreadyPaid + paidAmount;
+      const { error: statusError } = await client.from('finance_student_charges').update({ status: newTotal >= numeric(charge.amount_due) ? 'paid' : 'partial', updated_at: new Date().toISOString() }).eq('id', charge.id).eq('centre_id', profile.centreId);
+      if (statusError) throw new Error('Paiement enregistré (reçu ' + receipt + '), mais le statut du frais n’a pas été actualisé : ' + statusError.message);
+      setNotice('Paiement enregistré. Reçu n° ' + receipt + '.'); setPaymentForm({ chargeId: '', amount: '', method: 'cash', reference: '', notes: '' }); setModal(null); setView('receipts'); reload();
+    } catch (cause) { setError(readableFinanceError(cause, 'Impossible d’enregistrer le paiement.')); }
+    finally { setSaving(false); }
+  }
+
+  async function savePayroll(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault(); if (!profile?.centreId) return;
+    const hours = payrollForm.compensationMode === 'hourly' ? Number(payrollForm.hours) : 0;
+    const hourlyRate = payrollForm.compensationMode === 'hourly' ? Number(payrollForm.hourlyRate) : 0;
+    const sessionCount = payrollForm.compensationMode === 'session' ? Number(payrollForm.sessionCount) : 0;
+    const sessionRate = payrollForm.compensationMode === 'session' ? Number(payrollForm.sessionRate) : 0;
+    const monthlySalary = payrollForm.compensationMode === 'monthly' ? Number(payrollForm.monthlySalary) : 0;
+    const deduction = Number(payrollForm.advanceDeduction || 0);
+    const gross = payrollForm.compensationMode === 'session' ? sessionCount * sessionRate : payrollForm.compensationMode === 'monthly' ? monthlySalary : hours * hourlyRate;
+    if (!payrollForm.teacherId || !payrollForm.periodStart || !payrollForm.periodEnd || payrollForm.periodEnd < payrollForm.periodStart || ![hours,hourlyRate,sessionCount,sessionRate,monthlySalary,deduction,gross].every(Number.isFinite) || [hours,hourlyRate,sessionCount,sessionRate,monthlySalary,deduction].some((value) => value < 0) || deduction > gross || deduction > advanceBalance(Number(payrollForm.teacherId)) + 0.001) { setError('Vérifiez le formateur, la période et les montants. La déduction ne peut dépasser ni la rémunération brute ni le solde des avances à récupérer.'); return; }
+    setSaving(true); setError(null); setNotice(null);
+    try {
+      const client = getSupabaseClient();
+      const payload = { teacher_id: Number(payrollForm.teacherId), period_start: payrollForm.periodStart, period_end: payrollForm.periodEnd, compensation_mode: payrollForm.compensationMode, hours, hourly_rate: hourlyRate, session_count: sessionCount, session_rate: sessionRate, monthly_salary: monthlySalary, gross_amount: Math.round(gross * 100) / 100, advance_deduction: Math.round(deduction * 100) / 100, amount_due: Math.round((gross - deduction) * 100) / 100, notes: payrollForm.notes.trim() || null };
+      let payrollId = editingPayrollId;
+      if (editingPayrollId) {
+        const result = await client.from('finance_teacher_payroll').update(payload).eq('id', editingPayrollId).eq('centre_id', profile.centreId).eq('status', 'draft').select('id').maybeSingle();
+        if (result.error) throw result.error;
+        if (!result.data?.id) throw new Error('La rémunération n’est plus modifiable ou n’existe pas.');
+        payrollId = result.data.id;
+      } else {
+        const result = await client.from('finance_teacher_payroll').insert({ ...payload, centre_id: profile.centreId, status: 'draft', created_by: profile.id }).select('id').single();
+        if (result.error) throw result.error;
+        payrollId = result.data.id;
+      }
+      if (deduction > 0 && payrollId) {
+        const { error: repaymentError } = await client.from('finance_teacher_advance_repayments').upsert({ centre_id: profile.centreId, teacher_id: Number(payrollForm.teacherId), payroll_id: payrollId, amount: Math.round(deduction * 100) / 100, status: 'active', created_by: profile.id }, { onConflict: 'centre_id,payroll_id' });
+        if (repaymentError) throw new Error('Rémunération enregistrée, mais la déduction d’avance n’a pas été enregistrée : ' + repaymentError.message);
+      } else if (payrollId) {
+        const { error: repaymentError } = await client.from('finance_teacher_advance_repayments').update({ status: 'cancelled' }).eq('centre_id', profile.centreId).eq('payroll_id', payrollId).eq('status', 'active');
+        if (repaymentError) throw repaymentError;
+      }
+      setNotice(editingPayrollId ? 'Rémunération modifiée.' : 'Rémunération préparée en brouillon.'); setModal(null); reload();
+    } catch (cause) { setError(readableFinanceError(cause, 'Impossible d’enregistrer la rémunération.')); }
+    finally { setSaving(false); }
+  }
+
+  async function saveAdvance(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault(); if (!profile?.centreId) return;
+    const amount = Number(advanceForm.amount);
+    if (!advanceForm.teacherId || !advanceForm.advanceDate || !Number.isFinite(amount) || amount <= 0) { setError('Choisissez un formateur et saisissez une avance supérieure à 0 DH.'); return; }
+    setSaving(true); setError(null); setNotice(null);
+    try {
+      const { error } = await getSupabaseClient().from('finance_teacher_advances').insert({ centre_id: profile.centreId, teacher_id: Number(advanceForm.teacherId), amount, advance_date: advanceForm.advanceDate, notes: advanceForm.notes.trim() || null, status: 'active', created_by: profile.id });
+      if (error) throw error;
+      setNotice('Avance enregistrée. Elle pourra être déduite lors de la préparation d’une rémunération.');
+      setAdvanceForm({ teacherId: '', amount: '', advanceDate: today(), notes: '' }); setModal(null); reload();
+    } catch (cause) { setError(readableFinanceError(cause, 'Impossible d’enregistrer l’avance.')); }
+    finally { setSaving(false); }
+  }
+
+  async function changePayrollStatus(item: Payroll, status: 'approved' | 'cancelled') {
+    if (!profile?.centreId) return;
+    const prompt = status === 'cancelled' ? 'Annuler cette rémunération ?' : 'Valider cette rémunération ?';
+    if (!window.confirm(prompt)) return;
+    setSaving(true); setError(null); setNotice(null);
+    try {
+      const client = getSupabaseClient();
+      const { error } = await client.from('finance_teacher_payroll').update({ status, approved_by: status === 'approved' ? profile.id : null }).eq('id', item.id).eq('centre_id', profile.centreId).eq('status', 'draft');
+      if (error) throw error;
+      if (status === 'cancelled') {
+        const { error: repaymentError } = await client.from('finance_teacher_advance_repayments').update({ status: 'cancelled' }).eq('centre_id', profile.centreId).eq('payroll_id', item.id).eq('status', 'active');
+        if (repaymentError) throw repaymentError;
+      }
+      setNotice(status === 'approved' ? 'Rémunération validée.' : 'Rémunération annulée. La déduction d’avance associée est libérée.'); reload();
+    } catch (cause) { setError(cause instanceof Error ? cause.message : 'Impossible de modifier la rémunération.'); }
+    finally { setSaving(false); }
+  }
+
+  async function markPayrollPaid(item: Payroll) {
+    if (!profile?.centreId || !window.confirm('Confirmer le paiement de ' + money(numeric(item.amount_due)) + ' à ' + teacherName(item.teacher_id) + ' ?')) return;
+    setSaving(true); setError(null); setNotice(null);
+    try {
+      const { error } = await getSupabaseClient().from('finance_teacher_payroll').update({ status: 'paid', paid_at: new Date().toISOString() }).eq('id', item.id).eq('centre_id', profile.centreId).eq('status', 'approved');
+      if (error) throw error;
+      setNotice('Rémunération marquée comme payée. Pensez à enregistrer la sortie correspondante dans la trésorerie.'); reload();
+    } catch (cause) { setError(readableFinanceError(cause, 'Impossible de confirmer le paiement.')); }
+    finally { setSaving(false); }
+  }
+
+  const metrics = [
+    { label: 'Frais enregistrés', value: money(summary.charges), note: charges.length + ' frais', tone: 'brand' },
+    { label: 'Recettes encaissées', value: money(summary.collected), note: payments.length + ' paiements', tone: 'positive' },
+    { label: 'Reste à encaisser', value: money(outstanding), note: 'Montants restant dus', tone: 'warning' },
+    { label: 'Dépenses payées', value: money(summary.expenses), note: summary.expenseCount + ' dépenses', tone: 'neutral' },
+    { label: 'Rémunérations à payer', value: money(summary.payrollDue), note: summary.payrollCount + ' rémunérations validées', tone: 'neutral' },
+    { label: 'Solde net indicatif', value: money(summary.collected - summary.expenses), note: 'Encaissements moins dépenses', tone: 'brand' },
+  ];
+
+  if (loading) return <LoadingState label="Chargement du tableau de bord financier…" />;
+
+  return <section className="sp-page finance-page">
+    <div className="finance-page-heading"><div><p className="sp-page-eyebrow">Gestion de l’établissement</p><h1 className="sp-page-title">Tableau de bord financier</h1><p className="sp-muted">Suivez les recettes, les dépenses, les justificatifs et les rémunérations du centre.</p></div><span className="finance-currency-pill">Devise : MAD</span></div>
+    {error && <Alert tone="error"><p>{error}</p></Alert>}
+    {notice && <Alert tone="success"><p>{notice}</p></Alert>}
+    <div className="finance-metrics-grid">{metrics.map((metric) => <article className={'finance-metric-card finance-tone-' + metric.tone} key={metric.label}><p>{metric.label}</p><strong>{metric.value}</strong><span>{metric.note}</span></article>)}</div>
+
+    <nav aria-label="Sous-rubriques financières" className="finance-subnav">
+      <button type="button" className={view === 'students' ? 'active' : ''} onClick={() => { setView('students'); setModal(null); }}> <span>01</span><b>Opérations étudiants</b><small>Frais et encaissements</small></button>
+      <button type="button" className={view === 'expenses' ? 'active' : ''} onClick={() => { setView('expenses'); setModal(null); }}><span>02</span><b>Dépenses et trésorerie</b><small>Sorties, caisses et banques</small></button>
+      <button type="button" className={view === 'receipts' ? 'active' : ''} onClick={() => { setView('receipts'); setModal(null); }}><span>03</span><b>Reçus et justificatifs</b><small>Historique et impression</small></button>
+      <button type="button" className={view === 'payroll' ? 'active' : ''} onClick={() => { setView('payroll'); setModal(null); }}><span>04</span><b>Paiement des formateurs</b><small>Préparer et suivre les règlements</small></button>
+    </nav>
+
+    {view === 'students' && <section className="finance-content-panel">
+      <div className="finance-content-heading"><div><h2>Opérations étudiants</h2><p>Créez les frais, enregistrez les paiements partiels et suivez le reste dû.</p></div><div className="finance-toolbar"><Button type="button" variant="secondary" onClick={() => { setPaymentForm({ chargeId: charges.find((c) => ['open', 'partial'].includes(c.status))?.id ?? '', amount: '', method: 'cash', reference: '', notes: '' }); setError(null); setModal('payment'); }}>+ Enregistrer un paiement</Button><Button type="button" onClick={() => openCharge()}>+ Ajouter des frais</Button></div></div>
+      <div className="finance-table-wrap"><table className="finance-table"><thead><tr><th>Étudiant</th><th>Frais</th><th>Montant</th><th>Payé</th><th>Reste</th><th>Statut</th><th>Actions</th></tr></thead><tbody>{charges.map((charge) => { const paid = paidForCharge(charge.id); const remaining = Math.max(0, numeric(charge.amount_due) - paid); return <tr key={charge.id}><td>{studentName(charge.student_id)}</td><td>{charge.label}{charge.due_date && <small>Échéance : {charge.due_date}</small>}</td><td>{money(numeric(charge.amount_due))}</td><td>{money(paid)}</td><td>{money(remaining)}</td><td><span className={'finance-status finance-status-' + charge.status}>{charge.status === 'paid' ? 'Payé' : charge.status === 'partial' ? 'Partiel' : 'À payer'}</span></td><td><div className="finance-row-actions"><Button type="button" variant="secondary" disabled={saving || charge.status === 'cancelled'} onClick={() => openCharge(charge)}>Modifier</Button><Button type="button" variant="danger" disabled={saving || charge.status === 'cancelled'} onClick={() => void cancelCharge(charge)}>Supprimer</Button></div></td></tr>; })}{charges.length === 0 && <tr><td colSpan={7}>Aucun frais enregistré.</td></tr>}</tbody></table></div>
+    </section>}
+
+    {view === 'expenses' && <FinanceOperations onChange={reload} />}
+    {view === 'receipts' && <section className="finance-content-panel"><div className="finance-content-heading"><div><h2>Reçus et justificatifs</h2><p>Retrouvez chaque encaissement et imprimez un reçu à remettre à l’étudiant.</p></div></div><div className="finance-table-wrap"><table className="finance-table"><thead><tr><th>N° reçu</th><th>Étudiant</th><th>Frais</th><th>Montant</th><th>Mode</th><th>Date</th><th>Justificatif</th></tr></thead><tbody>{payments.map((payment) => { const charge = charges.find((item) => item.id === payment.charge_id); return <tr key={payment.id}><td><strong>{payment.receipt_number}</strong></td><td>{charge ? studentName(charge.student_id) : '—'}</td><td>{charge?.label ?? 'Frais archivés'}</td><td>{money(numeric(payment.amount))}</td><td>{METHODS.find((method) => method.value === payment.payment_method)?.label ?? payment.payment_method}</td><td>{new Date(payment.paid_at).toLocaleString('fr-MA')}</td><td><Button type="button" variant="secondary" onClick={() => { const receipt = '<!doctype html><html lang="fr"><head><meta charset="utf-8"><title>Reçu ' + payment.receipt_number + '</title><style>body{font:16px Arial;margin:40px;color:#172033}header{border-bottom:2px solid #173b6c;padding-bottom:18px;margin-bottom:24px}h1{color:#173b6c}table{width:100%;border-collapse:collapse;margin-top:24px}td{padding:12px;border-bottom:1px solid #ddd}.amount{font-size:24px;font-weight:bold}footer{margin-top:60px;color:#667}</style></head><body><header><h1>REÇU DE PAIEMENT</h1><p>SchoolPlans · Centre de formation</p></header><p><strong>Numéro :</strong> ' + payment.receipt_number + '</p><p><strong>Date :</strong> ' + new Date(payment.paid_at).toLocaleString('fr-MA') + '</p><p><strong>Étudiant :</strong> ' + (charge ? studentName(charge.student_id) : '—') + '</p><p><strong>Objet :</strong> ' + (charge?.label ?? 'Frais de formation') + '</p><p><strong>Mode de paiement :</strong> ' + (METHODS.find((method) => method.value === payment.payment_method)?.label ?? payment.payment_method) + '</p><p class="amount">Montant reçu : ' + money(numeric(payment.amount)) + '</p>' + (payment.reference ? '<p>Référence : ' + payment.reference + '</p>' : '') + '<footer>Document généré depuis le tableau de bord financier.</footer><script>window.onload=()=>window.print()</script></body></html>'; const blob = new Blob([receipt], { type: 'text/html;charset=utf-8' }); const url = URL.createObjectURL(blob); const win = window.open(url, '_blank'); if (!win) { URL.revokeObjectURL(url); setError('Autorisez les fenêtres popup pour imprimer le reçu.'); } }}>Imprimer le reçu</Button></td></tr>; })}{payments.length === 0 && <tr><td colSpan={7}>Aucun reçu disponible.</td></tr>}</tbody></table></div><p className="finance-security-note">Les paiements restent dans l’historique pour préserver la traçabilité comptable.</p></section>}
+
+    {view === 'payroll' && <section className="finance-content-panel"><div className="finance-content-heading"><div><h2>Paiement des formateurs</h2><p>Choisissez un mode de calcul par formateur et suivez les avances déjà versées.</p></div><div className="finance-toolbar"><Button type="button" variant="secondary" onClick={() => { setAdvanceForm({ teacherId: '', amount: '', advanceDate: today(), notes: '' }); setError(null); setModal('advance'); }}>+ Enregistrer une avance</Button><Button type="button" onClick={() => openPayroll()}>+ Préparer une rémunération</Button></div></div><div className="finance-table-wrap"><table className="finance-table"><thead><tr><th>Formateur</th><th>Mode</th><th>Période</th><th>Brut</th><th>Avance déduite</th><th>Net à payer</th><th>Statut</th><th>Actions</th></tr></thead><tbody>{payroll.map((item) => <tr key={item.id}><td>{teacherName(item.teacher_id)}</td><td>{item.compensation_mode === 'session' ? 'À la séance' : item.compensation_mode === 'monthly' ? 'Mensuel' : 'À l’heure'}</td><td>{item.period_start} → {item.period_end}</td><td>{money(numeric(item.gross_amount ?? item.amount_due))}</td><td>{money(numeric(item.advance_deduction))}</td><td>{money(numeric(item.amount_due))}</td><td><span className={'finance-status finance-status-' + item.status}>{item.status === 'draft' ? 'Brouillon' : item.status === 'approved' ? 'Validée' : item.status === 'paid' ? 'Payée' : 'Annulée'}</span></td><td><div className="finance-row-actions">{item.status === 'draft' && <><Button type="button" variant="secondary" disabled={saving} onClick={() => openPayroll(item)}>Modifier</Button><Button type="button" variant="secondary" disabled={saving} onClick={() => void changePayrollStatus(item, 'cancelled')}>Annuler</Button><Button type="button" disabled={saving} onClick={() => void changePayrollStatus(item, 'approved')}>Valider</Button></>}{item.status === 'approved' && <Button type="button" disabled={saving} onClick={() => void markPayrollPaid(item)}>Marquer payée</Button>}</div></td></tr>)}{payroll.length === 0 && <tr><td colSpan={8}>Aucune rémunération préparée.</td></tr>}</tbody></table></div><div className="finance-table-wrap"><h3>Avances versées</h3><table className="finance-table"><thead><tr><th>Formateur</th><th>Date</th><th>Montant</th><th>Solde total d’avance du formateur</th><th>Notes</th></tr></thead><tbody>{advances.filter((item) => item.status === 'active').map((item) => <tr key={item.id}><td>{teacherName(item.teacher_id)}</td><td>{item.advance_date}</td><td>{money(numeric(item.amount))}</td><td>{money(advanceBalance(item.teacher_id))}</td><td>{item.notes || '—'}</td></tr>)}{advances.filter((item) => item.status === 'active').length === 0 && <tr><td colSpan={5}>Aucune avance enregistrée.</td></tr>}</tbody></table></div><p className="finance-security-note">Le net à payer est calculé après déduction. Les avances sont suivies par formateur ; enregistrez également la sortie correspondante dans la trésorerie pour refléter le décaissement réel.</p></section>}
+
+    {modal === 'charge' && <Popup title={editingChargeId ? 'Modifier les frais' : 'Ajouter des frais'} onClose={() => setModal(null)}><form className="finance-modal-form" onSubmit={(event) => void saveCharge(event)}>
+      <label className="sp-form-field">Étudiant<select className="sp-field" required value={chargeForm.studentId} onChange={(event) => setChargeForm((v) => ({ ...v, studentId: event.target.value }))}><option value="">Sélectionner un étudiant</option>{students.map((student) => <option key={student.id} value={student.id}>{student.prenom} {student.nom}</option>)}</select></label>
+      <label className="sp-form-field">Libellé<input className="sp-field" required maxLength={120} value={chargeForm.label} onChange={(event) => setChargeForm((v) => ({ ...v, label: event.target.value }))} /></label>
+      <label className="sp-form-field">Montant (DH)<input className="sp-field" required min="0.01" step="0.01" type="number" value={chargeForm.amount} onChange={(event) => setChargeForm((v) => ({ ...v, amount: event.target.value }))} /></label>
+      <label className="sp-form-field">Date limite (facultative)<input className="sp-field" type="date" value={chargeForm.dueDate} onChange={(event) => setChargeForm((v) => ({ ...v, dueDate: event.target.value }))} /></label>
+      <label className="sp-form-field">Notes (facultatif)<textarea className="sp-field" rows={2} value={chargeForm.notes} onChange={(event) => setChargeForm((v) => ({ ...v, notes: event.target.value }))} /></label>
+      <div className="finance-modal-actions"><Button type="button" variant="secondary" onClick={() => setModal(null)}>Annuler</Button><Button type="submit" disabled={saving || students.length === 0}>{saving ? 'Enregistrement…' : 'Enregistrer'}</Button></div>
+    </form></Popup>}
+
+    {modal === 'payment' && <Popup title="Enregistrer un paiement" onClose={() => setModal(null)}><form className="finance-modal-form" onSubmit={(event) => void recordPayment(event)}>
+      <label className="sp-form-field">Frais de l’étudiant<select className="sp-field" required value={paymentForm.chargeId} onChange={(event) => setPaymentForm((v) => ({ ...v, chargeId: event.target.value }))}><option value="">Sélectionner des frais</option>{charges.filter((charge) => ['open', 'partial'].includes(charge.status)).map((charge) => <option key={charge.id} value={charge.id}>{studentName(charge.student_id)} — {charge.label} (reste {money(Math.max(0, numeric(charge.amount_due) - paidForCharge(charge.id)))})</option>)}</select></label>
+      <label className="sp-form-field">Montant reçu (DH)<input className="sp-field" required min="0.01" step="0.01" type="number" value={paymentForm.amount} onChange={(event) => setPaymentForm((v) => ({ ...v, amount: event.target.value }))} /></label>
+      <label className="sp-form-field">Mode de paiement<select className="sp-field" value={paymentForm.method} onChange={(event) => setPaymentForm((v) => ({ ...v, method: event.target.value }))}>{METHODS.map((method) => <option key={method.value} value={method.value}>{method.label}</option>)}</select></label>
+      <label className="sp-form-field">Référence (facultative)<input className="sp-field" value={paymentForm.reference} onChange={(event) => setPaymentForm((v) => ({ ...v, reference: event.target.value }))} /></label>
+      <label className="sp-form-field">Notes (facultatif)<textarea className="sp-field" rows={2} value={paymentForm.notes} onChange={(event) => setPaymentForm((v) => ({ ...v, notes: event.target.value }))} /></label>
+      <div className="finance-modal-actions"><Button type="button" variant="secondary" onClick={() => setModal(null)}>Annuler</Button><Button type="submit" disabled={saving || !charges.some((charge) => ['open', 'partial'].includes(charge.status))}>{saving ? 'Enregistrement…' : 'Enregistrer le paiement'}</Button></div>
+    </form></Popup>}
+
+    {modal === 'payroll' && <Popup title={editingPayrollId ? 'Modifier la rémunération' : 'Préparer une rémunération'} onClose={() => setModal(null)}><form className="finance-modal-form" onSubmit={(event) => void savePayroll(event)}>
+      <label className="sp-form-field">Formateur<select className="sp-field" required value={payrollForm.teacherId} onChange={(event) => { const teacherId = event.target.value; const previous = payroll.find((item) => String(item.teacher_id) === teacherId); setPayrollForm((v) => ({ ...v, teacherId, compensationMode: previous?.compensation_mode ?? v.compensationMode, hours: previous ? String(previous.hours) : v.hours, hourlyRate: previous ? String(previous.hourly_rate) : v.hourlyRate, sessionCount: previous ? String(previous.session_count ?? 0) : v.sessionCount, sessionRate: previous ? String(previous.session_rate ?? 0) : v.sessionRate, monthlySalary: previous ? String(previous.monthly_salary ?? 0) : v.monthlySalary, advanceDeduction: String(advanceBalance(Number(teacherId))) })); }}><option value="">Sélectionner un formateur</option>{teachers.map((teacher) => <option key={teacher.id} value={teacher.id}>{teacher.nom}</option>)}</select></label>
+      <div className="finance-modal-grid"><label className="sp-form-field">Début de période<input className="sp-field" required type="date" value={payrollForm.periodStart} onChange={(event) => setPayrollForm((v) => ({ ...v, periodStart: event.target.value }))} /></label><label className="sp-form-field">Fin de période<input className="sp-field" required type="date" value={payrollForm.periodEnd} onChange={(event) => setPayrollForm((v) => ({ ...v, periodEnd: event.target.value }))} /></label></div>
+      <label className="sp-form-field">Mode de rémunération<select className="sp-field" value={payrollForm.compensationMode} onChange={(event) => setPayrollForm((v) => ({ ...v, compensationMode: event.target.value }))}><option value="hourly">À l’heure</option><option value="session">À la séance</option><option value="monthly">Salaire mensuel</option></select></label>
+      {payrollForm.compensationMode === 'hourly' && <div className="finance-modal-grid"><label className="sp-form-field">Heures réalisées<input className="sp-field" required type="number" min="0" step="0.25" value={payrollForm.hours} onChange={(event) => setPayrollForm((v) => ({ ...v, hours: event.target.value }))} /></label><label className="sp-form-field">Taux horaire (DH)<input className="sp-field" required type="number" min="0" step="0.01" value={payrollForm.hourlyRate} onChange={(event) => setPayrollForm((v) => ({ ...v, hourlyRate: event.target.value }))} /></label></div>}
+      {payrollForm.compensationMode === 'session' && <div className="finance-modal-grid"><label className="sp-form-field">Séances réalisées<input className="sp-field" required type="number" min="0" step="1" value={payrollForm.sessionCount} onChange={(event) => setPayrollForm((v) => ({ ...v, sessionCount: event.target.value }))} /></label><label className="sp-form-field">Tarif par séance (DH)<input className="sp-field" required type="number" min="0" step="0.01" value={payrollForm.sessionRate} onChange={(event) => setPayrollForm((v) => ({ ...v, sessionRate: event.target.value }))} /></label></div>}
+      {payrollForm.compensationMode === 'monthly' && <label className="sp-form-field">Salaire mensuel (DH)<input className="sp-field" required type="number" min="0" step="0.01" value={payrollForm.monthlySalary} onChange={(event) => setPayrollForm((v) => ({ ...v, monthlySalary: event.target.value }))} /></label>}
+      <label className="sp-form-field">Avance à déduire (DH)<input className="sp-field" type="number" min="0" step="0.01" max={payrollGross} value={payrollForm.advanceDeduction} onChange={(event) => setPayrollForm((v) => ({ ...v, advanceDeduction: event.target.value }))} /><small className="sp-muted">Avances restant à récupérer pour ce formateur : {money(advanceBalance(Number(payrollForm.teacherId)))}</small></label>
+      <p className="finance-payroll-estimate">Brut : <strong>{money(payrollGross)}</strong> · Net à payer : <strong>{money(payrollNet)}</strong></p>
+      <label className="sp-form-field">Notes (facultatif)<textarea className="sp-field" rows={2} value={payrollForm.notes} onChange={(event) => setPayrollForm((v) => ({ ...v, notes: event.target.value }))} /></label>
+      <div className="finance-modal-actions"><Button type="button" variant="secondary" onClick={() => setModal(null)}>Annuler</Button><Button type="submit" disabled={saving || teachers.length === 0}>{saving ? 'Enregistrement…' : 'Enregistrer en brouillon'}</Button></div>
+    </form></Popup>}
+    {modal === 'advance' && <Popup title="Enregistrer une avance au formateur" onClose={() => setModal(null)}><form className="finance-modal-form" onSubmit={(event) => void saveAdvance(event)}>
+      <label className="sp-form-field">Formateur<select className="sp-field" required value={advanceForm.teacherId} onChange={(event) => setAdvanceForm((v) => ({ ...v, teacherId: event.target.value }))}><option value="">Sélectionner un formateur</option>{teachers.map((teacher) => <option key={teacher.id} value={teacher.id}>{teacher.nom}</option>)}</select></label>
+      <label className="sp-form-field">Montant de l’avance (DH)<input className="sp-field" required type="number" min="0.01" step="0.01" value={advanceForm.amount} onChange={(event) => setAdvanceForm((v) => ({ ...v, amount: event.target.value }))} /></label>
+      <label className="sp-form-field">Date<input className="sp-field" required type="date" value={advanceForm.advanceDate} onChange={(event) => setAdvanceForm((v) => ({ ...v, advanceDate: event.target.value }))} /></label>
+      <label className="sp-form-field">Notes (facultatif)<textarea className="sp-field" rows={2} value={advanceForm.notes} onChange={(event) => setAdvanceForm((v) => ({ ...v, notes: event.target.value }))} /></label>
+      <div className="finance-modal-actions"><Button type="button" variant="secondary" onClick={() => setModal(null)}>Annuler</Button><Button type="submit" disabled={saving || teachers.length === 0}>{saving ? 'Enregistrement…' : 'Enregistrer l’avance'}</Button></div>
+    </form></Popup>}
+    <p className="finance-security-note">Accès réservé au directeur et à l’administrateur du centre. Les opérations financières sont isolées par établissement.</p>
+  </section>;
+}

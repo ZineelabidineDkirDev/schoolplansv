@@ -23,6 +23,7 @@ const ROLE_SECTIONS: Record<SourceRole, readonly AppSection[]> = {
     'vs',
     'vfg',
     'vc',
+    'vfinance',
   ],
   director: [
     ...COMMON_SECTIONS,
@@ -37,10 +38,11 @@ const ROLE_SECTIONS: Record<SourceRole, readonly AppSection[]> = {
     'vs',
     'vfg',
     'vc',
+    'vfinance',
   ],
   super_admin: [...COMMON_SECTIONS, 'vz', 'vd'],
-  formateur: [...COMMON_SECTIONS, 'vl', 'vn', 'vp', 'vk'],
-  etudiant: [...COMMON_SECTIONS, 'vm', 'vq', 'vk'],
+  formateur: [...COMMON_SECTIONS, 'vl', 'vn', 'vp', 'vk', 'vrapport'],
+  etudiant: ['vcal', 'vr', 'vm', 'vq', 'vk', 'vrapport'],
 };
 
 const SECTION_REQUIREMENTS: Partial<Record<AppSection, readonly CentrePermissionKey[]>> = {
@@ -59,6 +61,8 @@ const SECTION_REQUIREMENTS: Partial<Record<AppSection, readonly CentrePermission
 export const SECTION_LABELS: Record<AppSection, string> = {
   vcal: 'Planning',
   vd: 'Tableau de bord',
+  vrapport: 'Mon rapport',
+  vfinance: 'Tableau de bord financier',
   vl: 'Séances',
   vr: 'Salles',
   vk: 'Supports',
@@ -94,10 +98,16 @@ export function canAccessSection(
 ): section is AppSection {
   if (!APP_SECTIONS.includes(section as AppSection)) return false;
   const appSection = section as AppSection;
-  if (!ROLE_SECTIONS[role].includes(appSection)) return false;
+  if (appSection === 'vfinance') return role === 'admin' || role === 'director';
   if (role === 'super_admin') return true;
-  if (role === 'formateur' && appSection === 'vp') return true;
+
+  // Les étudiants peuvent toujours consulter leur planning et leurs salles.
+  // Ces deux rubriques restent en lecture seule et ne dépendent pas des droits administratifs du centre.
+  if (role === 'etudiant' && (appSection === 'vcal' || appSection === 'vr')) return true;
+
+  if (!ROLE_SECTIONS[role].includes(appSection)) return false;
   if (role === 'etudiant' && appSection === 'vk') return true;
+  if (role === 'formateur' && appSection === 'vp') return true;
 
   return (SECTION_REQUIREMENTS[appSection] ?? []).every((key) => permissions[key] === true);
 }

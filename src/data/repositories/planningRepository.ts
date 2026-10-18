@@ -74,7 +74,8 @@ export async function getPlanningData(
   client: SupabaseClient,
   centreId: string,
   profileId: string,
-  role: 'admin' | 'director' | 'super_admin' | 'formateur',
+  role: 'admin' | 'director' | 'super_admin' | 'formateur' | 'etudiant',
+  email = '',
 ): Promise<PlanningData> {
   if (!centreId) {
     throw new Error(
@@ -82,6 +83,33 @@ export async function getPlanningData(
         ? 'Sélectionnez un centre avant d’ouvrir le planning.'
         : 'Votre profil n’est rattaché à aucun centre.',
     );
+  }
+
+  let studentCourseIds: StudentIdentifier[] | null = null;
+  if (role === 'etudiant') {
+    if (!email.trim()) {
+      throw new Error('Votre compte ne contient pas d’adresse e-mail vérifiable.');
+    }
+    const { data: student, error: studentError } = await client
+      .from('etudiants')
+      .select('id')
+      .eq('centre_id', centreId)
+      .ilike('email', email.trim())
+      .maybeSingle();
+    if (studentError) throw studentError;
+    if (!student) {
+      studentCourseIds = [];
+    } else {
+      const { data: enrollments, error: enrollmentsError } = await client
+        .from('inscriptions')
+        .select('cours_id')
+        .eq('centre_id', centreId)
+        .eq('etudiant_id', student.id);
+      if (enrollmentsError) throw enrollmentsError;
+      studentCourseIds = [...new Set((enrollments ?? [])
+        .map((row) => row.cours_id)
+        .filter((id): id is StudentIdentifier => typeof id === 'string' || typeof id === 'number'))];
+    }
   }
 
   let teacherId: StudentIdentifier | null = null;
@@ -112,6 +140,11 @@ export async function getPlanningData(
     .select('id,matiere_id,formateur_id,salle_id,groupe_id,jour,debut,fin,valable_du,valable_au')
     .eq('centre_id', centreId);
   if (teacherId !== null) coursesQuery = coursesQuery.eq('formateur_id', teacherId);
+  if (studentCourseIds !== null) {
+    coursesQuery = studentCourseIds.length
+      ? coursesQuery.in('id', studentCourseIds)
+      : coursesQuery.in('id', ['__no_student_courses__']);
+  }
 
   let teachersQuery = client
     .from('formateurs')

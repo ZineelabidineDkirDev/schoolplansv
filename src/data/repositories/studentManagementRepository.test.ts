@@ -29,8 +29,10 @@ function createClient(results: Record<string, unknown> = {}) {
     }
     query.single = vi.fn(async () => ({ data: results[table] ?? { id: 17 }, error: null }));
     query.maybeSingle = vi.fn(async () => ({ data: results[table] ?? { id: 17 }, error: null }));
-    query.then = (resolve: (value: unknown) => unknown) =>
-      Promise.resolve({ data: results[table] ?? [], error: null }).then(resolve);
+    query.then = (...args: unknown[]) => {
+      const resolve = args[0] as ((value: unknown) => unknown) | undefined;
+      return Promise.resolve({ data: results[table] ?? [], error: null }).then(resolve);
+    };
     return query;
   });
   return { client: { from } as unknown as SupabaseClient, calls, from };
