@@ -170,3 +170,154 @@ $$;
 
 revoke all on function public.finance_pay_teacher_payroll(uuid, uuid, timestamptz, text, text) from public;
 grant execute on function public.finance_pay_teacher_payroll(uuid, uuid, timestamptz, text, text) to authenticated;
+
+-- Session completion workflow: trainers submit; only the director validates.
+alter table public.seances_realisees
+  add column if not exists validation_status text not null default 'approved',
+  add column if not exists submitted_by uuid references auth.users(id) on delete set null,
+  add column if not exists submitted_at timestamptz not null default now(),
+  add column if not exists validated_by uuid references auth.users(id) on delete set null,
+  add column if not exists validated_at timestamptz,
+  add column if not exists rejection_reason text;
+
+do $$
+begin
+  if not exists (select 1 from pg_constraint where conname = 'seances_realisees_validation_status_check') then
+    alter table public.seances_realisees
+      add constraint seances_realisees_validation_status_check
+      check (validation_status in ('pending','approved','rejected'));
+  end if;
+end $$;
+
+alter table public.seances_realisees enable row level security;
+
+-- Drop legacy policies first so a permissive older policy cannot allow trainers to validate themselves.
+do $$
+declare
+  existing_policy record;
+begin
+  for existing_policy in
+    select policyname from pg_policies
+    where schemaname = 'public' and tablename = 'seances_realisees'
+  loop
+    execute format('drop policy %I on public.seances_realisees', existing_policy.policyname);
+  end loop;
+end $$;
+
+create policy seances_realisees_director_all on public.seances_realisees
+for all to authenticated
+using (
+  exists (select 1 from public.profiles p
+    where p.id = auth.uid() and p.centre_id = seances_realisees.centre_id
+      and lower(p.role) in ('director','directeur'))
+)
+with check (
+  exists (select 1 from public.profiles p
+    where p.id = auth.uid() and p.centre_id = seances_realisees.centre_id
+      and lower(p.role) in ('director','directeur'))
+);
+
+create policy seances_realisees_admin_read on public.seances_realisees
+for select to authenticated
+using (
+  exists (select 1 from public.profiles p
+    where p.id = auth.uid() and p.centre_id = seances_realisees.centre_id
+      and lower(p.role) = 'admin')
+);
+
+create policy seances_realisees_trainer_read on public.seances_realisees
+for select to authenticated
+using (
+  exists (
+    select 1 from public.cours c
+    join public.formateurs f on f.id = c.formateur_id and f.centre_id = c.centre_id
+    where c.id = seances_realisees.cours_id
+      and c.centre_id = seances_realisees.centre_id
+      and f.profile_id = auth.uid()
+  )
+);
+
+create policy seances_realisees_trainer_insert on public.seances_realisees
+for insert to authenticated
+with check (
+  validation_status = 'pending'
+  and submitted_by = auth.uid()
+  and validated_by is null
+  and validated_at is null
+  and rejection_reason is null
+  and exists (
+    select 1 from public.cours c
+    join public.formateurs f on f.id = c.formateur_id and f.centre_id = c.centre_id
+    where c.id = seances_realisees.cours_id
+      and c.centre_id = seances_realisees.centre_id
+      and f.profile_id = auth.uid()
+  )
+);
+
+create policy seances_realisees_trainer_resubmit on public.seances_realisees
+for update to authenticated
+using (
+  validation_status in ('pending','rejected')
+  and submitted_by = auth.uid()
+  and exists (
+    select 1 from public.cours c
+    join public.formateurs f on f.id = c.formateur_id and f.centre_id = c.centre_id
+    where c.id = seances_realisees.cours_id
+      and c.centre_id = seances_realisees.centre_id
+      and f.profile_id = auth.uid()
+  )
+)
+with check (
+  validation_status = 'pending'
+  and submitted_by = auth.uid()
+  and validated_by is null
+  and validated_at is null
+  and rejection_reason is null
+  and exists (
+    select 1 from public.cours c
+    join public.formateurs f on f.id = c.formateur_id and f.centre_id = c.centre_id
+    where c.id = seances_realisees.cours_id
+      and c.centre_id = seances_realisees.centre_id
+      and f.profile_id = auth.uid()
+  )
+);
+
+grant select, insert, update on public.seances_realisees to authenticated;
+revoke delete on public.seances_realisees from authenticated;
+
+create or replace function public.finance_capture_session_audit()
+returns trigger
+language plpgsql
+security definer
+set search_path = public, pg_temp
+as $$
+declare
+  v_row jsonb;
+  v_old jsonb;
+  v_new jsonb;
+  v_centre_id uuid;
+  v_entity_id text;
+  v_reason text;
+begin
+  v_old := case when tg_op in ('UPDATE','DELETE') then to_jsonb(old) else null end;
+  v_new := case when tg_op in ('INSERT','UPDATE') then to_jsonb(new) else null end;
+  v_row := coalesce(v_new, v_old);
+  v_centre_id := (v_row->>'centre_id')::uuid;
+  v_entity_id := coalesce(v_row->>'cours_id','') || '|' || coalesce(v_row->>'date','');
+  v_reason := coalesce(v_new->>'rejection_reason', v_old->>'rejection_reason');
+
+  insert into public.finance_audit_log (
+    centre_id, entity_table, entity_id, operation, old_value, new_value, reason, actor_id
+  ) values (
+    v_centre_id, 'seances_realisees', v_entity_id, tg_op, v_old, v_new, v_reason, auth.uid()
+  );
+
+  if tg_op = 'DELETE' then return old; end if;
+  return new;
+end;
+$$;
+
+drop trigger if exists seances_realisees_finance_audit on public.seances_realisees;
+create trigger seances_realisees_finance_audit
+after insert or update on public.seances_realisees
+for each row execute function public.finance_capture_session_audit();
