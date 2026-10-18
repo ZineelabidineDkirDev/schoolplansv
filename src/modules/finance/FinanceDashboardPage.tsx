@@ -270,7 +270,7 @@ export function FinanceDashboardPage() {
         if (mixedModes) modeMismatchCount += 1;
         const complete = missingRateCount === 0 && modeMismatchCount === 0 && !!effectiveAtStart;
         const message = missingRateCount ? 'Tarif manquant pour ' + missingRateCount + ' séance(s).' : modeMismatchCount ? 'Le mode de rémunération a changé pendant le mois ; demandez au directeur de vérifier le calcul.' : !effectiveAtStart ? 'Aucun tarif en vigueur au premier jour du mois.' : count ? 'Calcul basé uniquement sur les séances validées par le directeur.' : 'Aucune séance validée ce mois-ci.';
-        if (active) setTrainerEstimate({ loading: false, mode: effectiveAtStart?.compensation_mode ?? [...modes].join(' / ') || 'Tarif à confirmer', hours: Math.round(hours * 100) / 100, count, amount: Math.round(amount * 100) / 100, complete, message, rateSummary: [...rateSummary].sort() });
+        if (active) setTrainerEstimate({ loading: false, mode: effectiveAtStart?.compensation_mode ?? ([...modes].join(' / ') || 'Tarif à confirmer'), hours: Math.round(hours * 100) / 100, count, amount: Math.round(amount * 100) / 100, complete, message, rateSummary: [...rateSummary].sort() });
       } catch (cause) {
         if (active) setTrainerEstimate({ loading: false, mode: '', hours: 0, count: 0, amount: 0, complete: false, message: readableFinanceError(cause, 'Impossible de calculer votre estimation.'), rateSummary: [] });
       }
