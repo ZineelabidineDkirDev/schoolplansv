@@ -11,6 +11,7 @@ import { getDashboardData } from '../../data/repositories/dashboardRepository';
 import { getSupabaseClient } from '../../data/supabase/client';
 import type { DashboardData, DashboardDateRange } from '../../types/dashboard';
 import { useAuth } from '../auth/AuthProvider';
+import { StudentPortalDashboardPage } from '../students/StudentPortalDashboardPage';
 
 type DashboardState =
   | { status: 'loading' }
@@ -582,17 +583,7 @@ export function DashboardPage() {
     );
   }
 
-  if (profile?.role === 'etudiant') {
-    return (
-      <section className="mx-auto w-full max-w-screen-2xl">
-        <PageHeader
-          description="Choisissez une rubrique dans le menu pour consulter vos cours et présences."
-          eyebrow="Espace étudiant"
-          title={`Bonjour${profile.fullName ? `, ${profile.fullName}` : ''}`}
-        />
-      </section>
-    );
-  }
+  if (profile?.role === 'etudiant') return <StudentPortalDashboardPage />;
 
   if (profile?.role === 'formateur') return <TeacherDashboard data={state.data} />;
 

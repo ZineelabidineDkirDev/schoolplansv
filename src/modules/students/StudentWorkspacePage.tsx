@@ -23,7 +23,7 @@ function displayDate(value: string) {
   return new Date(`${value}T00:00:00`).toLocaleDateString('fr-FR');
 }
 
-export function StudentWorkspacePage({ view }: { view: 'courses' | 'attendance' }) {
+export function StudentWorkspacePage({ view }: { view: 'courses' | 'attendance' | 'planning' | 'rooms' }) {
   const { profile, session } = useAuth();
   const [reload, setReload] = useState(0);
   const [state, setState] = useState<PageState>({ status: 'loading' });
@@ -58,17 +58,23 @@ export function StudentWorkspacePage({ view }: { view: 'courses' | 'attendance' 
     };
   }, [profile?.centreId, session?.user.email, reload]);
 
-  const isCourses = view === 'courses';
+  const isCourses = view === 'courses' || view === 'planning';
+  const isPlanning = view === 'planning';
+  const isRooms = view === 'rooms';
   return (
     <section className="mx-auto w-full max-w-screen-2xl space-y-5">
       <PageHeader
         description={
-          isCourses
-            ? 'Retrouvez les séances planifiées pour les cours auxquels vous êtes inscrit.'
-            : 'Consultez vos présences, retards et absences enregistrés par le centre.'
+          isPlanning
+            ? 'Votre emploi du temps personnel, limité aux cours auxquels vous êtes inscrit.'
+            : isRooms
+              ? 'Consultez les salles prévues pour vos cours et leurs horaires.'
+              : isCourses
+                ? 'Retrouvez les séances planifiées pour les cours auxquels vous êtes inscrit.'
+                : 'Consultez vos présences, retards et absences enregistrés par le centre.'
         }
         eyebrow="Espace étudiant"
-        title={isCourses ? 'Mes cours' : 'Mes présences'}
+        title={isPlanning ? 'Mon planning' : isRooms ? 'Mes salles de cours' : isCourses ? 'Mes cours' : 'Mes présences'}
       />
       {state.status === 'loading' && (
         <Panel>
@@ -91,6 +97,38 @@ export function StudentWorkspacePage({ view }: { view: 'courses' | 'attendance' 
           Votre compte n’est relié à aucun dossier étudiant dans ce centre. Demandez à
           l’administration de vérifier que votre dossier utilise l’adresse e-mail de connexion.
         </Alert>
+      )}
+      {state.status === 'loaded' && state.workspace.studentFound && isRooms && (
+        state.workspace.courses.length === 0 ? (
+          <EmptyState title="Aucune salle n’est associée à vos cours." description="Les salles apparaîtront ici lorsque l’administration aura affecté une salle à vos cours." />
+        ) : (
+          <div className="space-y-4">
+            {[...new Set(state.workspace.courses.map((course) => course.room).filter(Boolean))].sort((a, b) => a.localeCompare(b, 'fr')).map((room) => {
+              const roomCourses = state.workspace.courses.filter((course) => course.room === room).sort((a, b) => a.weekday - b.weekday || a.startsAt.localeCompare(b.startsAt));
+              return (
+                <Panel key={room}>
+                  <h2 className="text-lg font-semibold">Salle {room}</h2>
+                  <div className="sp-table-wrap">
+                    <table className="sp-table">
+                      <thead><tr><th>Jour</th><th>Cours</th><th>Horaire</th><th>Formateur</th></tr></thead>
+                      <tbody>{roomCourses.map((course) => (
+                        <tr key={String(course.id)}>
+                          <td>{course.startsOn && course.startsOn === course.endsOn ? displayDate(course.startsOn) : WEEKDAYS[course.weekday] ?? 'Jour à confirmer'}</td>
+                          <td><strong>{course.subject}</strong></td>
+                          <td>{course.startsAt.slice(0, 5)} – {course.endsAt.slice(0, 5)}</td>
+                          <td>{course.teacher || '—'}</td>
+                        </tr>
+                      ))}</tbody>
+                    </table>
+                  </div>
+                </Panel>
+              );
+            })}
+            {state.workspace.courses.some((course) => !course.room) && (
+              <Panel><h2 className="font-semibold">Salle à confirmer</h2><p className="sp-muted">Certains cours n’ont pas encore de salle affectée.</p></Panel>
+            )}
+          </div>
+        )
       )}
       {state.status === 'loaded' &&
         state.workspace.studentFound &&
@@ -143,7 +181,7 @@ export function StudentWorkspacePage({ view }: { view: 'courses' | 'attendance' 
             </div>
           </Panel>
         ))}
-      {state.status === 'loaded' && state.workspace.studentFound && !isCourses && (
+      {state.status === 'loaded' && state.workspace.studentFound && !isCourses && !isRooms && (
         <>
           {state.workspace.attendance.length > 0 && (
             <div className="grid grid-cols-2 gap-3 md:grid-cols-4">

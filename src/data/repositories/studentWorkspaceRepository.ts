@@ -60,7 +60,7 @@ export async function getStudentWorkspace(
     .from('etudiants')
     .select('id')
     .eq('centre_id', centreId)
-    .eq('email', email.trim())
+    .ilike('email', email.trim())
     .maybeSingle();
   if (studentError) throw studentError;
   if (!student) return { studentFound: false, courses: [], attendance: [] };

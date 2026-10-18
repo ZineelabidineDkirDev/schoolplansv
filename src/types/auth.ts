@@ -37,6 +37,7 @@ export type CentrePermissions = Partial<Record<CentrePermissionKey, boolean>>;
 export const APP_SECTIONS = [
   'vcal',
   'vd',
+  'vrapport',
   'vl',
   'vr',
   'vk',

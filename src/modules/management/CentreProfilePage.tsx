@@ -1,5 +1,5 @@
 import { useEffect, useState, type FormEvent } from 'react';
-import { Alert, Button, EmptyState, LoadingState, PageHeader, Panel } from '../../components/ui';
+import { Alert, Button, EmptyState, LoadingState, PageHeader, Panel, notify } from '../../components/ui';
 import {
   getCentreProfile,
   saveCentreProfile,
@@ -20,7 +20,11 @@ export function CentreProfilePage() {
   const [saving, setSaving] = useState(false);
   const [logoFile, setLogoFile] = useState<File | null>(null);
   const [logoPreview, setLogoPreview] = useState<string | null>(null);
-  const [message, setMessage] = useState<{ tone: 'success' | 'error'; text: string } | null>(null);
+  const [message, setMessageState] = useState<{ tone: 'success' | 'error'; text: string } | null>(null);
+  const setMessage = (value: { tone: 'success' | 'error'; text: string } | null) => {
+    setMessageState(value);
+    if (value) notify(value.text, value.tone === 'error' ? 'error' : 'success');
+  };
   const [revision, setRevision] = useState(0);
 
   useEffect(() => {
