@@ -157,7 +157,10 @@ begin
   set status = 'paid',
       paid_at = coalesce(p_paid_at, now()),
       payment_method = p_payment_method,
-      payment_reference = nullif(trim(coalesce(p_payment_reference, '')), '')
+      payment_reference = nullif(trim(coalesce(p_payment_reference, '')), ''),
+      payment_reversed_at = null,
+      payment_reversal_reason = null,
+      payment_reversed_by = null
   where id = p_payroll_id
     and centre_id = v_centre_id
     and status = 'approved';
@@ -170,6 +173,133 @@ $$;
 
 revoke all on function public.finance_pay_teacher_payroll(uuid, uuid, timestamptz, text, text) from public;
 grant execute on function public.finance_pay_teacher_payroll(uuid, uuid, timestamptz, text, text) to authenticated;
+revoke all on function public.finance_reverse_teacher_payroll_payment(uuid, text) from public;
+grant execute on function public.finance_reverse_teacher_payroll_payment(uuid, text) to authenticated;
+
+-- Keep a traceable reversal when a payroll payment was recorded by mistake.
+alter table public.finance_teacher_payroll
+  add column if not exists payment_reversed_at timestamptz,
+  add column if not exists payment_reversal_reason text,
+  add column if not exists payment_reversed_by uuid references auth.users(id) on delete set null;
+
+create or replace function public.finance_capture_audit()
+returns trigger
+language plpgsql
+security invoker
+set search_path = public, pg_temp
+as $
+declare
+  v_centre_id uuid;
+  v_entity_id text;
+  v_reason text;
+begin
+  v_centre_id := coalesce((to_jsonb(new)->>'centre_id')::uuid, (to_jsonb(old)->>'centre_id')::uuid);
+  v_entity_id := coalesce(to_jsonb(new)->>'id', to_jsonb(old)->>'id');
+  v_reason := coalesce(
+    to_jsonb(new)->>'payment_reversal_reason',
+    to_jsonb(new)->>'cancellation_reason',
+    to_jsonb(new)->>'notes',
+    to_jsonb(old)->>'notes'
+  );
+  insert into public.finance_audit_log (
+    centre_id, entity_table, entity_id, operation, old_value, new_value, reason, actor_id
+  ) values (
+    v_centre_id, tg_table_name, v_entity_id, tg_op,
+    case when tg_op in ('UPDATE','DELETE') then to_jsonb(old) else null end,
+    case when tg_op in ('INSERT','UPDATE') then to_jsonb(new) else null end,
+    v_reason, auth.uid()
+  );
+  if tg_op = 'DELETE' then return old; end if;
+  return new;
+end;
+$;
+
+create or replace function public.finance_reverse_teacher_payroll_payment(
+  p_payroll_id uuid,
+  p_reason text
+)
+returns void
+language plpgsql
+security invoker
+set search_path = public, pg_temp
+as $
+declare
+  v_centre_id uuid;
+  v_profile_centre_id uuid;
+  v_role text;
+  v_teacher_id bigint;
+  v_status text;
+  v_movement_id uuid;
+  v_account_id uuid;
+  v_amount numeric(12,2);
+begin
+  select p.centre_id, lower(p.role)
+    into v_profile_centre_id, v_role
+  from public.profiles p where p.id = auth.uid();
+
+  if auth.uid() is null or v_role not in ('director','directeur') or v_profile_centre_id is null then
+    raise exception 'Accès refusé : directeur du centre requis.';
+  end if;
+  if p_reason is null or length(trim(p_reason)) < 3 then
+    raise exception 'Un motif détaillé est obligatoire pour annuler le paiement.';
+  end if;
+
+  select pr.centre_id, pr.teacher_id, pr.status
+    into v_centre_id, v_teacher_id, v_status
+  from public.finance_teacher_payroll pr
+  where pr.id = p_payroll_id
+  for update;
+
+  if not found or v_centre_id <> v_profile_centre_id then
+    raise exception 'Rémunération introuvable pour ce centre.';
+  end if;
+  if v_status <> 'paid' then
+    raise exception 'Seul un paiement enregistré peut être annulé.';
+  end if;
+
+  select m.id, m.account_id, m.amount
+    into v_movement_id, v_account_id, v_amount
+  from public.finance_account_movements m
+  where m.centre_id = v_centre_id
+    and m.source_type = 'teacher_payroll'
+    and m.source_id = p_payroll_id
+    and m.movement_type = 'outflow'
+    and not exists (
+      select 1 from public.finance_account_movements rev
+      where rev.centre_id = m.centre_id
+        and rev.source_type = 'teacher_payroll_reversal'
+        and rev.source_id = m.id
+        and rev.movement_type = 'inflow'
+    )
+  order by m.movement_date desc, m.created_at desc
+  limit 1
+  for update;
+
+  if not found then
+    raise exception 'Aucun décaissement actif trouvé pour cette rémunération.';
+  end if;
+
+  insert into public.finance_account_movements (
+    centre_id, account_id, movement_type, amount, movement_date,
+    description, source_type, source_id, created_by
+  ) values (
+    v_centre_id, v_account_id, 'inflow', v_amount, now(),
+    'Annulation paiement rémunération formateur ' || v_teacher_id || ' : ' || trim(p_reason),
+    'teacher_payroll_reversal', v_movement_id, auth.uid()
+  );
+
+  update public.finance_teacher_payroll
+  set status = 'approved',
+      payment_reversed_at = now(),
+      payment_reversal_reason = trim(p_reason),
+      payment_reversed_by = auth.uid()
+  where id = p_payroll_id and centre_id = v_centre_id and status = 'paid';
+
+  if not found then
+    raise exception 'La rémunération a changé de statut pendant l’annulation.';
+  end if;
+end;
+$;
 
 -- Session completion workflow: trainers submit; only the director validates.
 alter table public.seances_realisees
