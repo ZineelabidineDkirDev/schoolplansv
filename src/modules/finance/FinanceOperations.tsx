@@ -211,7 +211,7 @@ export function FinanceOperations({ onChange, readOnly = false }: { onChange: ()
   if (loading) return <LoadingState label="Chargement des dépenses et de la trésorerie…" />;
 
   return <section className="finance-operations-module">
-    {readOnly && <Alert tone="info"><p>Mode consultation : l’administrateur peut consulter les dépenses et la trésorerie, mais seul le directeur peut créer, modifier, valider ou payer des opérations.</p></Alert>}
+    {readOnly && <Alert tone="success"><p>Mode consultation : l’administrateur peut consulter les dépenses et la trésorerie, mais seul le directeur peut créer, modifier, valider ou payer des opérations.</p></Alert>}
     {error && <Alert tone="error"><p>{error}</p></Alert>}
     {notice && <Alert tone="success"><p>{notice}</p></Alert>}
     <div className="finance-operation-tabs">
