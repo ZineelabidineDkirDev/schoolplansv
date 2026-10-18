@@ -582,6 +582,42 @@ export async function markPlanningOccurrenceCompleted(
   if (error) throw error;
 }
 
+export async function correctApprovedPlanningOccurrence(
+  client: SupabaseClient,
+  actor: PlanningActor,
+  courseId: StudentIdentifier,
+  date: string,
+  reason: string,
+): Promise<void> {
+  if (actor.role !== 'director') {
+    throw new Error('Seul le directeur peut corriger une séance déjà validée.');
+  }
+  if (!actor.centreId) throw new Error('Votre profil n’est pas rattaché à un centre.');
+  const correctionReason = reason.trim();
+  if (correctionReason.length < 3) throw new Error('Un motif détaillé est obligatoire pour corriger une validation.');
+
+  const { data: userData, error: userError } = await client.auth.getUser();
+  if (userError) throw userError;
+  if (!userData.user) throw new Error('Session expirée. Reconnectez-vous.');
+
+  const { data, error } = await client
+    .from('seances_realisees')
+    .update({
+      validation_status: 'rejected',
+      validated_by: userData.user.id,
+      validated_at: new Date().toISOString(),
+      rejection_reason: correctionReason,
+    })
+    .eq('centre_id', actor.centreId)
+    .eq('cours_id', courseId)
+    .eq('date', date)
+    .eq('validation_status', 'approved')
+    .select('cours_id')
+    .maybeSingle();
+  if (error) throw error;
+  if (!data) throw new Error('Cette séance n’est plus validée. Actualisez le planning.');
+}
+
 export async function reviewPlanningOccurrence(
   client: SupabaseClient,
   actor: PlanningActor,
