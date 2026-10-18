@@ -182,6 +182,9 @@ grant execute on function public.finance_pay_teacher_payroll(uuid, uuid, timesta
 revoke all on function public.finance_reverse_teacher_payroll_payment(uuid, text) from public;
 grant execute on function public.finance_reverse_teacher_payroll_payment(uuid, text) to authenticated;
 
+create unique index if not exists finance_teacher_rates_teacher_effective_uq
+  on public.finance_teacher_rates (centre_id, teacher_id, effective_from);
+
 -- Keep a traceable reversal when a payroll payment was recorded by mistake.
 alter table public.finance_teacher_payroll
   add column if not exists payment_reversed_at timestamptz,
