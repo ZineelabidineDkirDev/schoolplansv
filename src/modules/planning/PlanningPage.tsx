@@ -842,7 +842,11 @@ export function PlanningPage({ view = 'planning' }: { view?: 'planning' | 'sessi
         <Alert className="space-y-2" tone="error">
           <p>Le planning n’a pas pu être chargé.</p>
           <p>{state.message}</p>
-          <Button onClick={() => setReloadKey((key) => key + 1)} type="button" variant="secondary">
+          <Button
+            onClick={() => setReloadKey((key) => key + 1)}
+            type="button"
+            variant="secondary"
+          >
             Réessayer
           </Button>
         </Alert>
