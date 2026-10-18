@@ -553,6 +553,16 @@ export async function markPlanningOccurrenceCompleted(
     .maybeSingle();
   if (lookupError) throw lookupError;
   if (!data) throw new Error('Ce cours ne vous est pas attribué.');
+  if (date > new Date().toISOString().slice(0, 10)) throw new Error('Une séance future ne peut pas être déclarée terminée.');
+  const { data: cancellation, error: cancellationError } = await client
+    .from('annulations')
+    .select('cours_id')
+    .eq('centre_id', actor.centreId)
+    .eq('cours_id', courseId)
+    .eq('date', date)
+    .maybeSingle();
+  if (cancellationError) throw cancellationError;
+  if (cancellation) throw new Error('Cette séance est annulée et ne peut pas être déclarée réalisée.');
 
   const { error } = await client
     .from('seances_realisees')
@@ -588,6 +598,18 @@ export async function reviewPlanningOccurrence(
   if (status === 'rejected' && !rejectionReason) {
     throw new Error('Un motif est obligatoire pour refuser une séance.');
   }
+  if (status === 'approved') {
+    const { data: cancellation, error: cancellationError } = await client
+      .from('annulations')
+      .select('cours_id')
+      .eq('centre_id', actor.centreId)
+      .eq('cours_id', courseId)
+      .eq('date', date)
+      .maybeSingle();
+    if (cancellationError) throw cancellationError;
+    if (cancellation) throw new Error('Cette séance est annulée. Une éventuelle rémunération exceptionnelle doit être enregistrée séparément.');
+  }
+
   const { data: userData, error: userError } = await client.auth.getUser();
   if (userError) throw userError;
   if (!userData.user) throw new Error('Session expirée. Reconnectez-vous.');
