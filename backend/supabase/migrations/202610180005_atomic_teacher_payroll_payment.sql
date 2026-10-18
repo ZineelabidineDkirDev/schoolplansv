@@ -196,7 +196,7 @@ returns trigger
 language plpgsql
 security invoker
 set search_path = public, pg_temp
-as $
+as $$
 declare
   v_centre_id uuid;
   v_entity_id text;
@@ -231,7 +231,7 @@ returns void
 language plpgsql
 security invoker
 set search_path = public, pg_temp
-as $
+as $$
 declare
   v_centre_id uuid;
   v_profile_centre_id uuid;
