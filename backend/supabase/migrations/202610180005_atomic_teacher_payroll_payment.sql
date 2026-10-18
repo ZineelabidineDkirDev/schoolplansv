@@ -334,6 +334,47 @@ begin
 end;
 $$;
 
+-- Snapshot the planned session duration at first submission so later timetable edits do not rewrite payroll history.
+alter table public.seances_realisees
+  add column if not exists planned_minutes integer;
+
+do $$
+begin
+  if not exists (select 1 from pg_constraint where conname = 'seances_realisees_planned_minutes_check') then
+    alter table public.seances_realisees
+      add constraint seances_realisees_planned_minutes_check
+      check (planned_minutes is null or planned_minutes >= 0);
+  end if;
+end $$;
+
+create or replace function public.finance_snapshot_planned_session_duration()
+returns trigger
+language plpgsql
+security invoker
+set search_path = public, pg_temp
+as $$
+declare
+  v_minutes integer;
+begin
+  if tg_op = 'INSERT' or new.cours_id is distinct from old.cours_id or new.date is distinct from old.date then
+    select greatest(0, round(extract(epoch from (c.fin - c.debut)) / 60)::integer)
+      into v_minutes
+    from public.cours c
+    where c.id = new.cours_id and c.centre_id = new.centre_id;
+    if not found or v_minutes is null or v_minutes <= 0 then
+      raise exception 'Durée planifiée introuvable pour cette séance.';
+    end if;
+    new.planned_minutes := v_minutes;
+  end if;
+  return new;
+end;
+$$;
+
+drop trigger if exists seances_realisees_snapshot_duration on public.seances_realisees;
+create trigger seances_realisees_snapshot_duration
+before insert or update on public.seances_realisees
+for each row execute function public.finance_snapshot_planned_session_duration();
+
 -- Session completion workflow: trainers submit; only the director validates.
 alter table public.seances_realisees
   add column if not exists validation_status text not null default 'approved',
