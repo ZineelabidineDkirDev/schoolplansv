@@ -13,6 +13,7 @@ import { calculateFormationProgress } from '../../business/planning/planningProg
 import {
   deletePlanningClosure,
   deletePlanningCourse,
+  correctApprovedPlanningOccurrence,
   getPlanningData,
   markPlanningOccurrenceCompleted,
   reviewPlanningOccurrence,
@@ -452,6 +453,17 @@ export function PlanningPage({ view = 'planning' }: { view?: 'planning' | 'sessi
     );
   }
 
+  async function correctOccurrence() {
+    if (!editor?.courseId || profile?.role !== 'director') return;
+    const reason = window.prompt('Motif obligatoire de la correction de cette validation :');
+    if (!reason?.trim() || reason.trim().length < 3) { setActionError('Un motif détaillé est obligatoire.'); return; }
+    if (!await confirmAction('Retirer la validation de cette séance ? Si elle a déjà été payée, créez ensuite un ajustement financier séparé.')) return;
+    await performAction(
+      () => correctApprovedPlanningOccurrence(getSupabaseClient(), actor, editor.courseId!, editor.occurrenceDate, reason),
+      'Validation corrigée et auditée. Si la séance a déjà été payée, créez un ajustement financier séparé.',
+    );
+  }
+
   async function reviewOccurrence(status: 'approved' | 'rejected') {
     if (!editor?.courseId || profile?.role !== 'director') return;
     const reason = status === 'rejected' ? window.prompt('Motif obligatoire du refus :') : undefined;
@@ -677,9 +689,9 @@ export function PlanningPage({ view = 'planning' }: { view?: 'planning' | 'sessi
                 </small>
               </div>
               {occurrence.cancelled && <span className="planning-state-label">Annulée</span>}
-              {!occurrence.cancelled && occurrence.completed && (
-                <span className="planning-state-label">Réalisée</span>
-              )}
+              {!occurrence.cancelled && occurrence.validationStatus === 'pending' && <span className="planning-state-label">En attente de validation</span>}
+              {!occurrence.cancelled && occurrence.validationStatus === 'rejected' && <span className="planning-state-label">Refusée</span>}
+              {!occurrence.cancelled && occurrence.completed && <span className="planning-state-label">Validée</span>}
               {canManage && (
                 <button
                   className="planning-action-link"
@@ -1195,7 +1207,7 @@ export function PlanningPage({ view = 'planning' }: { view?: 'planning' | 'sessi
                           {editor.validationStatus === 'rejected' ? '↻ Resoumettre la séance' : '✓ Soumettre pour validation'}
                         </Button>
                       )}
-                    {profile?.role === 'director' && editor.validationStatus === 'pending' && <><Button disabled={saving} onClick={() => void reviewOccurrence('approved')} type="button">Valider la séance</Button><Button disabled={saving} onClick={() => void reviewOccurrence('rejected')} type="button" variant="danger">Refuser avec motif</Button></>}
+                    {profile?.role === 'director' && editor.validationStatus === 'pending' && <><Button disabled={saving} onClick={() => void reviewOccurrence('approved')} type="button">Valider la séance</Button><Button disabled={saving} onClick={() => void reviewOccurrence('rejected')} type="button" variant="danger">Refuser avec motif</Button></>}{profile?.role === 'director' && editor.validationStatus === 'approved' && <Button disabled={saving} onClick={() => void correctOccurrence()} type="button" variant="secondary">Corriger la validation</Button>}
                     {canManageSchedule && <Button disabled={saving} onClick={deleteCourse} type="button" variant="danger">
                       Supprimer le cours
                     </Button>}
