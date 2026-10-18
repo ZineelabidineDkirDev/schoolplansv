@@ -9,6 +9,8 @@ type Teacher = { id: number; nom: string };
 type TeacherAdvance = { id: string; teacher_id: number; amount: number | string; advance_date: string; notes: string | null; status: string };
 type AdvanceRepayment = { teacher_id: number; payroll_id: string; amount: number | string; status: string };
 type FinanceAccount = { id: string; name: string; account_type: 'cash' | 'bank'; active: boolean };
+type PlannedSession = { cours_id: number | string; date: string; validation_status: string };
+type CourseTime = { id: number | string; debut: string; fin: string };
 type Charge = { id: string; student_id: number; label: string; amount_due: number | string; due_date: string | null; status: string; notes: string | null };
 type Payment = { id: string; charge_id: string; amount: number | string; payment_method: string; receipt_number: string; paid_at: string; reference?: string | null; notes?: string | null };
 type Payroll = { id: string; teacher_id: number; period_start: string; period_end: string; hours: number | string; hourly_rate: number | string; compensation_mode?: string; session_count?: number | string; session_rate?: number | string; monthly_salary?: number | string; gross_amount?: number | string; advance_deduction?: number | string; amount_due: number | string; status: string; paid_at: string | null; notes: string | null; payment_method?: string | null; payment_reference?: string | null; cancellation_reason?: string | null };
@@ -19,6 +21,7 @@ const METHODS = [{ value: 'cash', label: 'Espèces' }, { value: 'bank_transfer',
 const money = (value: number) => new Intl.NumberFormat('fr-MA', { style: 'currency', currency: 'MAD', maximumFractionDigits: 2 }).format(value);
 const numeric = (value: number | string | null | undefined) => { const n = Number(value ?? 0); return Number.isFinite(n) ? n : 0; };
 const today = () => new Date().toISOString().slice(0, 10);
+const durationHours = (start: string, end: string) => { const parse = (value: string) => { const [hours, minutes] = value.split(':').map(Number); return hours * 60 + minutes; }; const duration = parse(end) - parse(start); return Number.isFinite(duration) && duration > 0 ? duration / 60 : 0; };
 const monthStart = () => today().slice(0, 8) + '01';
 const monthEnd = () => today().slice(0, 8) + String(new Date(new Date().getFullYear(), new Date().getMonth() + 1, 0).getDate()).padStart(2, '0');
 
@@ -55,6 +58,7 @@ export function FinanceDashboardPage() {
   const [advanceRepayments, setAdvanceRepayments] = useState<AdvanceRepayment[]>([]);
   const [teacherRates, setTeacherRates] = useState<TeacherRate[]>([]);
   const [financeAccounts, setFinanceAccounts] = useState<FinanceAccount[]>([]);
+  const [validatedSessionStats, setValidatedSessionStats] = useState({ count: 0, hours: 0, gross: 0, loading: false, missingRateCount: 0, modeMismatchCount: 0, rateSummary: [] as string[] });
   const [payrollPaymentForm, setPayrollPaymentForm] = useState({ payrollId: '', amount: '', paidAt: today(), method: 'cash', reference: '', accountId: '' });
   const [rateForm, setRateForm] = useState({ teacherId: '', compensationMode: 'hourly', hourlyRate: '', sessionRate: '', monthlySalary: '', effectiveFrom: today(), notes: '' });
   const [loading, setLoading] = useState(true);
@@ -122,11 +126,76 @@ export function FinanceDashboardPage() {
     return () => { active = false; };
   }, [profile?.centreId, reloadKey]);
 
+  useEffect(() => {
+    let active = true;
+    async function loadValidatedSessions() {
+      if (modal !== 'payroll' || !isDirector || !profile?.centreId || !payrollForm.teacherId || !payrollForm.periodStart || !payrollForm.periodEnd) {
+        setValidatedSessionStats({ count: 0, hours: 0, gross: 0, loading: false, missingRateCount: 0, modeMismatchCount: 0, rateSummary: [] });
+        return;
+      }
+      setValidatedSessionStats((current) => ({ ...current, loading: true, gross: 0, missingRateCount: 0, modeMismatchCount: 0, rateSummary: [] }));
+      try {
+        const client = getSupabaseClient();
+        const courseResult = await client.from('cours').select('id,debut,fin').eq('centre_id', profile.centreId).eq('formateur_id', Number(payrollForm.teacherId));
+        if (courseResult.error) throw courseResult.error;
+        const courseRows = (courseResult.data ?? []) as CourseTime[];
+        if (!courseRows.length) {
+          if (active) setValidatedSessionStats({ count: 0, hours: 0, gross: 0, loading: false, missingRateCount: 0, modeMismatchCount: 0, rateSummary: [] });
+          return;
+        }
+        const courseIds = courseRows.map((course) => course.id);
+        const [sessionResult, cancellationResult] = await Promise.all([
+          client.from('seances_realisees').select('cours_id,date,validation_status').eq('centre_id', profile.centreId).eq('validation_status', 'approved').gte('date', payrollForm.periodStart).lte('date', payrollForm.periodEnd).in('cours_id', courseIds),
+          client.from('annulations').select('cours_id,date').eq('centre_id', profile.centreId).gte('date', payrollForm.periodStart).lte('date', payrollForm.periodEnd).in('cours_id', courseIds),
+        ]);
+        if (sessionResult.error) throw sessionResult.error;
+        if (cancellationResult.error) throw cancellationResult.error;
+        const approved = (sessionResult.data ?? []) as PlannedSession[];
+        const cancelled = new Set((cancellationResult.data ?? []).map((row) => String(row.cours_id) + '|' + row.date));
+        const byId = new Map(courseRows.map((course) => [String(course.id), course]));
+        let count = 0, hours = 0, gross = 0, missingRateCount = 0, modeMismatchCount = 0;
+        const rateSummary = new Set<string>();
+        for (const session of approved) {
+          if (cancelled.has(String(session.cours_id) + '|' + session.date)) continue;
+          const course = byId.get(String(session.cours_id));
+          if (!course) continue;
+          const sessionHours = durationHours(course.debut, course.fin);
+          if (sessionHours <= 0) continue;
+          count += 1;
+          hours += sessionHours;
+          if (payrollForm.compensationMode === 'monthly') continue;
+          const rate = teacherRates
+            .filter((item) => Number(item.teacher_id) === Number(payrollForm.teacherId) && item.effective_from <= session.date)
+            .sort((a, b) => b.effective_from.localeCompare(a.effective_from))[0];
+          if (!rate) { missingRateCount += 1; continue; }
+          if (rate.compensation_mode !== payrollForm.compensationMode) { modeMismatchCount += 1; continue; }
+          if (rate.compensation_mode === 'hourly') {
+            const hourly = numeric(rate.hourly_rate);
+            gross += sessionHours * hourly;
+            rateSummary.add(rate.effective_from + ' : ' + money(hourly) + '/h');
+          } else {
+            const perSession = numeric(rate.session_rate);
+            gross += perSession;
+            rateSummary.add(rate.effective_from + ' : ' + money(perSession) + '/séance');
+          }
+        }
+        if (active) setValidatedSessionStats({ count, hours: Math.round(hours * 100) / 100, gross: Math.round(gross * 100) / 100, loading: false, missingRateCount, modeMismatchCount, rateSummary: [...rateSummary].sort() });
+      } catch (cause) {
+        if (active) {
+          setValidatedSessionStats({ count: 0, hours: 0, gross: 0, loading: false, missingRateCount: 0, modeMismatchCount: 0, rateSummary: [] });
+          setError(readableFinanceError(cause, 'Impossible de calculer les séances validées.'));
+        }
+      }
+    }
+    void loadValidatedSessions();
+    return () => { active = false; };
+  }, [modal, isDirector, profile?.centreId, payrollForm.teacherId, payrollForm.periodStart, payrollForm.periodEnd, payrollForm.compensationMode, teacherRates, reloadKey]);
+
   const studentName = (id: number) => { const student = students.find((item) => Number(item.id) === Number(id)); return student ? (student.prenom + ' ' + student.nom).trim() : 'Étudiant #' + id; };
   const teacherName = (id: number) => { const teacher = teachers.find((item) => Number(item.id) === Number(id)); return teacher ? teacher.nom : 'Formateur #' + id; };
   const advanceBalance = (teacherId: number) => Math.max(0, advances.filter((item) => Number(item.teacher_id) === Number(teacherId) && item.status === 'active').reduce((sum, item) => sum + numeric(item.amount), 0) - advanceRepayments.filter((item) => Number(item.teacher_id) === Number(teacherId) && item.status === 'active').reduce((sum, item) => sum + numeric(item.amount), 0));
   const advanceBalanceForPayroll = (teacherId: number, payrollId: string | null) => advanceBalance(teacherId) + (payrollId ? advanceRepayments.filter((item) => item.payroll_id === payrollId && item.status === 'active').reduce((sum, item) => sum + numeric(item.amount), 0) : 0);
-  const payrollGross = payrollForm.compensationMode === 'session' ? numeric(payrollForm.sessionCount) * numeric(payrollForm.sessionRate) : payrollForm.compensationMode === 'monthly' ? numeric(payrollForm.monthlySalary) : numeric(payrollForm.hours) * numeric(payrollForm.hourlyRate);
+  const payrollGross = payrollForm.compensationMode === 'monthly' ? numeric(payrollForm.monthlySalary) : validatedSessionStats.gross;
   const payrollNet = Math.max(0, payrollGross - numeric(payrollForm.advanceDeduction));
   const paidForCharge = (chargeId: string) => payments.filter((payment) => payment.charge_id === chargeId).reduce((sum, payment) => sum + numeric(payment.amount), 0);
   const outstanding = Math.max(0, summary.charges - summary.collected);
@@ -203,13 +272,14 @@ export function FinanceDashboardPage() {
   async function savePayroll(event: FormEvent<HTMLFormElement>) {
     event.preventDefault(); if (!profile?.centreId) return;
     if (!isDirector) { setError('Seul le directeur peut préparer une rémunération.'); return; }
-    const hours = payrollForm.compensationMode === 'hourly' ? Number(payrollForm.hours) : 0;
-    const hourlyRate = payrollForm.compensationMode === 'hourly' ? Number(payrollForm.hourlyRate) : 0;
-    const sessionCount = payrollForm.compensationMode === 'session' ? Number(payrollForm.sessionCount) : 0;
-    const sessionRate = payrollForm.compensationMode === 'session' ? Number(payrollForm.sessionRate) : 0;
+    const hours = validatedSessionStats.hours;
+    const hourlyRate = payrollForm.compensationMode === 'hourly' && hours > 0 ? validatedSessionStats.gross / hours : 0;
+    const sessionCount = validatedSessionStats.count;
+    const sessionRate = payrollForm.compensationMode === 'session' && sessionCount > 0 ? validatedSessionStats.gross / sessionCount : 0;
     const monthlySalary = payrollForm.compensationMode === 'monthly' ? Number(payrollForm.monthlySalary) : 0;
     const deduction = Number(payrollForm.advanceDeduction || 0);
-    const gross = payrollForm.compensationMode === 'session' ? sessionCount * sessionRate : payrollForm.compensationMode === 'monthly' ? monthlySalary : hours * hourlyRate;
+    const gross = payrollForm.compensationMode === 'monthly' ? monthlySalary : validatedSessionStats.gross;
+    if (payrollForm.compensationMode !== 'monthly' && (validatedSessionStats.loading || validatedSessionStats.missingRateCount > 0 || validatedSessionStats.modeMismatchCount > 0)) { setError(validatedSessionStats.loading ? 'Attendez le calcul des séances validées.' : validatedSessionStats.missingRateCount > 0 ? 'Il manque un tarif avec date d’effet pour ' + validatedSessionStats.missingRateCount + ' séance(s) validée(s).' : 'Le mode de rémunération a changé pendant la période. Séparez la paie par mode avant de valider.'); return; }
     if (!payrollForm.teacherId || !payrollForm.periodStart || !payrollForm.periodEnd || payrollForm.periodStart.slice(8,10) !== '01' || payrollForm.periodEnd !== payrollForm.periodStart.slice(0,8) + String(new Date(Number(payrollForm.periodStart.slice(0,4)), Number(payrollForm.periodStart.slice(5,7)), 0).getDate()).padStart(2,'0') || payrollForm.periodEnd < payrollForm.periodStart || ![hours,hourlyRate,sessionCount,sessionRate,monthlySalary,deduction,gross].every(Number.isFinite) || [hours,hourlyRate,sessionCount,sessionRate,monthlySalary,deduction].some((value) => value < 0) || deduction > gross || deduction > advanceBalanceForPayroll(Number(payrollForm.teacherId), editingPayrollId) + 0.001) { setError('La période doit couvrir un mois civil complet (du 1er au dernier jour). Vérifiez aussi les montants : la déduction ne peut dépasser ni la rémunération brute ni le solde des avances.'); return; }
     setSaving(true); setError(null); setNotice(null);
     try {
@@ -361,13 +431,13 @@ export function FinanceDashboardPage() {
       <label className="sp-form-field">Formateur<select className="sp-field" required value={payrollForm.teacherId} onChange={(event) => { const teacherId = event.target.value; const previous = payroll.find((item) => String(item.teacher_id) === teacherId && item.period_start === payrollForm.periodStart); const rate = teacherRates.filter((item) => String(item.teacher_id) === teacherId && item.effective_from <= payrollForm.periodStart).sort((a, b) => b.effective_from.localeCompare(a.effective_from))[0]; setPayrollForm((v) => ({ ...v, teacherId, compensationMode: previous?.compensation_mode ?? rate?.compensation_mode ?? v.compensationMode, hours: previous ? String(previous.hours) : v.hours, hourlyRate: previous ? String(previous.hourly_rate) : rate?.compensation_mode === 'hourly' ? String(rate.hourly_rate) : v.hourlyRate, sessionCount: previous ? String(previous.session_count ?? 0) : v.sessionCount, sessionRate: previous ? String(previous.session_rate ?? 0) : rate?.compensation_mode === 'session' ? String(rate.session_rate) : v.sessionRate, monthlySalary: previous ? String(previous.monthly_salary ?? 0) : rate?.compensation_mode === 'monthly' ? String(rate.monthly_salary) : v.monthlySalary, advanceDeduction: String(advanceBalanceForPayroll(Number(teacherId), editingPayrollId)) })); }}><option value="">Sélectionner un formateur</option>{teachers.map((teacher) => <option key={teacher.id} value={teacher.id}>{teacher.nom}</option>)}</select></label>
       <div className="finance-modal-grid"><label className="sp-form-field">Début de période<input className="sp-field" required type="date" value={payrollForm.periodStart} onChange={(event) => setPayrollForm((v) => { const periodStart = event.target.value; const rate = teacherRates.filter((item) => String(item.teacher_id) === v.teacherId && item.effective_from <= periodStart).sort((a, b) => b.effective_from.localeCompare(a.effective_from))[0]; return { ...v, periodStart, compensationMode: rate?.compensation_mode ?? v.compensationMode, hourlyRate: rate?.compensation_mode === 'hourly' ? String(rate.hourly_rate) : v.hourlyRate, sessionRate: rate?.compensation_mode === 'session' ? String(rate.session_rate) : v.sessionRate, monthlySalary: rate?.compensation_mode === 'monthly' ? String(rate.monthly_salary) : v.monthlySalary }; })} /></label><label className="sp-form-field">Fin de période<input className="sp-field" required type="date" value={payrollForm.periodEnd} onChange={(event) => setPayrollForm((v) => ({ ...v, periodEnd: event.target.value }))} /></label></div>
       <label className="sp-form-field">Mode de rémunération<select className="sp-field" value={payrollForm.compensationMode} onChange={(event) => setPayrollForm((v) => ({ ...v, compensationMode: event.target.value }))}><option value="hourly">À l’heure</option><option value="session">À la séance</option><option value="monthly">Salaire mensuel</option></select></label>
-      {payrollForm.compensationMode === 'hourly' && <div className="finance-modal-grid"><label className="sp-form-field">Heures réalisées<input className="sp-field" required type="number" min="0" step="0.25" value={payrollForm.hours} onChange={(event) => setPayrollForm((v) => ({ ...v, hours: event.target.value }))} /></label><label className="sp-form-field">Taux horaire (DH)<input className="sp-field" required type="number" min="0" step="0.01" value={payrollForm.hourlyRate} onChange={(event) => setPayrollForm((v) => ({ ...v, hourlyRate: event.target.value }))} /></label></div>}
-      {payrollForm.compensationMode === 'session' && <div className="finance-modal-grid"><label className="sp-form-field">Séances réalisées<input className="sp-field" required type="number" min="0" step="1" value={payrollForm.sessionCount} onChange={(event) => setPayrollForm((v) => ({ ...v, sessionCount: event.target.value }))} /></label><label className="sp-form-field">Tarif par séance (DH)<input className="sp-field" required type="number" min="0" step="0.01" value={payrollForm.sessionRate} onChange={(event) => setPayrollForm((v) => ({ ...v, sessionRate: event.target.value }))} /></label></div>}
+      {payrollForm.compensationMode === 'hourly' && <div className="finance-modal-grid"><div className="sp-form-field"><label>Heures validées</label><strong>{validatedSessionStats.loading ? 'Calcul…' : validatedSessionStats.hours.toFixed(2) + ' h'}</strong></div><div className="sp-form-field"><label>Tarif moyen pondéré</label><strong>{validatedSessionStats.hours > 0 ? money(validatedSessionStats.gross / validatedSessionStats.hours) + '/h' : '—'}</strong></div></div>}
+      {payrollForm.compensationMode === 'session' && <div className="finance-modal-grid"><div className="sp-form-field"><label>Séances validées</label><strong>{validatedSessionStats.loading ? 'Calcul…' : String(validatedSessionStats.count)}</strong></div><div className="sp-form-field"><label>Tarif moyen par séance</label><strong>{validatedSessionStats.count > 0 ? money(validatedSessionStats.gross / validatedSessionStats.count) : '—'}</strong></div></div>}
       {payrollForm.compensationMode === 'monthly' && <label className="sp-form-field">Salaire mensuel (DH)<input className="sp-field" required type="number" min="0" step="0.01" value={payrollForm.monthlySalary} onChange={(event) => setPayrollForm((v) => ({ ...v, monthlySalary: event.target.value }))} /></label>}
       <label className="sp-form-field">Avance à déduire (DH)<input className="sp-field" type="number" min="0" step="0.01" max={payrollGross} value={payrollForm.advanceDeduction} onChange={(event) => setPayrollForm((v) => ({ ...v, advanceDeduction: event.target.value }))} /><small className="sp-muted">Avances restant à récupérer pour ce formateur : {money(advanceBalance(Number(payrollForm.teacherId)))}</small></label>
-      <p className="finance-payroll-estimate">Brut : <strong>{money(payrollGross)}</strong> · Net à payer : <strong>{money(payrollNet)}</strong></p>
+      <p className="finance-payroll-estimate">{payrollForm.compensationMode !== 'monthly' && validatedSessionStats.loading ? 'Calcul des séances validées…' : null}Brut : <strong>{money(payrollGross)}</strong> · Net à payer : <strong>{money(payrollNet)}</strong></p>{payrollForm.compensationMode !== 'monthly' && validatedSessionStats.rateSummary.length > 0 && <p className="sp-muted">Tarifs appliqués selon la date de chaque séance : {validatedSessionStats.rateSummary.join(' · ')}</p>}
       <label className="sp-form-field">Notes (facultatif)<textarea className="sp-field" rows={2} value={payrollForm.notes} onChange={(event) => setPayrollForm((v) => ({ ...v, notes: event.target.value }))} /></label>
-      <div className="finance-modal-actions"><Button type="button" variant="secondary" onClick={() => setModal(null)}>Annuler</Button><Button type="submit" disabled={saving || teachers.length === 0}>{saving ? 'Enregistrement…' : 'Enregistrer en brouillon'}</Button></div>
+      <div className="finance-modal-actions"><Button type="button" variant="secondary" onClick={() => setModal(null)}>Annuler</Button><Button type="submit" disabled={saving || teachers.length === 0 || validatedSessionStats.loading || (payrollForm.compensationMode !== 'monthly' && (validatedSessionStats.missingRateCount > 0 || validatedSessionStats.modeMismatchCount > 0))}>{saving ? 'Enregistrement…' : 'Enregistrer en brouillon'}</Button></div>
     </form></Popup>}
     {modal === 'payroll-payment' && <Popup title="Enregistrer le paiement du formateur" onClose={() => setModal(null)}><form className="finance-modal-form" onSubmit={(event) => void markPayrollPaid(event)}><label className="sp-form-field">Montant payé (DH)<input className="sp-field" required type="number" min="0.01" step="0.01" value={payrollPaymentForm.amount} onChange={(event) => setPayrollPaymentForm(v => ({ ...v, amount: event.target.value }))} /></label><label className="sp-form-field">Date du paiement<input className="sp-field" required type="date" value={payrollPaymentForm.paidAt} onChange={(event) => setPayrollPaymentForm(v => ({ ...v, paidAt: event.target.value }))} /></label><label className="sp-form-field">Caisse / compte bancaire<select className="sp-field" required value={payrollPaymentForm.accountId} onChange={(event) => setPayrollPaymentForm(v => ({ ...v, accountId: event.target.value }))}><option value="">Sélectionner un compte</option>{financeAccounts.map(account => <option key={account.id} value={account.id}>{account.name} — {account.account_type === 'cash' ? 'Caisse' : 'Banque'}</option>)}</select>{financeAccounts.length === 0 && <small className="sp-muted">Aucun compte actif. Créez-en un dans Dépenses et trésorerie.</small>}</label><label className="sp-form-field">Mode de paiement<select className="sp-field" value={payrollPaymentForm.method} onChange={(event) => setPayrollPaymentForm(v => ({ ...v, method: event.target.value }))}>{METHODS.map(method => <option key={method.value} value={method.value}>{method.label}</option>)}</select></label><label className="sp-form-field">Référence / reçu (facultatif)<input className="sp-field" value={payrollPaymentForm.reference} onChange={(event) => setPayrollPaymentForm(v => ({ ...v, reference: event.target.value }))} /></label><div className="finance-modal-actions"><Button type="button" variant="secondary" onClick={() => setModal(null)}>Annuler</Button><Button type="submit" disabled={saving || !isDirector || financeAccounts.length === 0}>{saving ? 'Enregistrement…' : 'Confirmer et verrouiller'}</Button></div></form></Popup>}
     {modal === 'rate' && <Popup title="Ajouter un tarif formateur" onClose={() => setModal(null)}><form className="finance-modal-form" onSubmit={(event) => void saveTeacherRate(event)}><label className="sp-form-field">Formateur<select className="sp-field" required value={rateForm.teacherId} onChange={(event) => setRateForm(v => ({ ...v, teacherId: event.target.value }))}><option value="">Sélectionner un formateur</option>{teachers.map(teacher => <option key={teacher.id} value={teacher.id}>{teacher.nom}</option>)}</select></label><label className="sp-form-field">Mode de rémunération<select className="sp-field" value={rateForm.compensationMode} onChange={(event) => setRateForm(v => ({ ...v, compensationMode: event.target.value }))}><option value="hourly">À l’heure</option><option value="session">À la séance</option><option value="monthly">Salaire mensuel</option></select></label>{rateForm.compensationMode === 'hourly' && <label className="sp-form-field">Tarif horaire (DH)<input className="sp-field" required type="number" min="0.01" step="0.01" value={rateForm.hourlyRate} onChange={(event) => setRateForm(v => ({ ...v, hourlyRate: event.target.value }))} /></label>}{rateForm.compensationMode === 'session' && <label className="sp-form-field">Tarif par séance (DH)<input className="sp-field" required type="number" min="0.01" step="0.01" value={rateForm.sessionRate} onChange={(event) => setRateForm(v => ({ ...v, sessionRate: event.target.value }))} /></label>}{rateForm.compensationMode === 'monthly' && <label className="sp-form-field">Salaire mensuel (DH)<input className="sp-field" required type="number" min="0.01" step="0.01" value={rateForm.monthlySalary} onChange={(event) => setRateForm(v => ({ ...v, monthlySalary: event.target.value }))} /></label>}<label className="sp-form-field">Date d’effet<input className="sp-field" required type="date" value={rateForm.effectiveFrom} onChange={(event) => setRateForm(v => ({ ...v, effectiveFrom: event.target.value }))} /></label><label className="sp-form-field">Notes (facultatif)<textarea className="sp-field" rows={2} value={rateForm.notes} onChange={(event) => setRateForm(v => ({ ...v, notes: event.target.value }))} /></label><div className="finance-modal-actions"><Button type="button" variant="secondary" onClick={() => setModal(null)}>Annuler</Button><Button type="submit" disabled={saving || !isDirector}>{saving ? 'Enregistrement…' : 'Enregistrer le tarif'}</Button></div></form></Popup>}
