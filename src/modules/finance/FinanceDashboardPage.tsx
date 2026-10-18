@@ -62,6 +62,7 @@ export function FinanceDashboardPage() {
   const [adjustments, setAdjustments] = useState<PayrollAdjustment[]>([]);
   const [financeAccounts, setFinanceAccounts] = useState<FinanceAccount[]>([]);
   const [validatedSessionStats, setValidatedSessionStats] = useState({ count: 0, hours: 0, gross: 0, loading: false, missingRateCount: 0, modeMismatchCount: 0, rateSummary: [] as string[] });
+  const [trainerEstimate, setTrainerEstimate] = useState({ loading: false, mode: '', hours: 0, count: 0, amount: 0, complete: true, message: '', rateSummary: [] as string[] });
   const [payrollPaymentForm, setPayrollPaymentForm] = useState({ payrollId: '', amount: '', paidAt: today(), method: 'cash', reference: '', accountId: '' });
   const [rateForm, setRateForm] = useState({ teacherId: '', compensationMode: 'hourly', hourlyRate: '', sessionRate: '', monthlySalary: '', effectiveFrom: today(), notes: '' });
   const [adjustmentForm, setAdjustmentForm] = useState({ teacherId: '', type: 'late_session' as PayrollAdjustment['adjustment_type'], amount: '', sourceSessionId: '', reason: '' });
@@ -198,6 +199,85 @@ export function FinanceDashboardPage() {
     void loadValidatedSessions();
     return () => { active = false; };
   }, [modal, isDirector, profile?.centreId, payrollForm.teacherId, payrollForm.periodStart, payrollForm.periodEnd, payrollForm.compensationMode, teacherRates, reloadKey]);
+
+  useEffect(() => {
+    let active = true;
+    async function loadTrainerEstimate() {
+      if (profile?.role !== 'formateur' || !profile.centreId) {
+        setTrainerEstimate({ loading: false, mode: '', hours: 0, count: 0, amount: 0, complete: true, message: '', rateSummary: [] });
+        return;
+      }
+      const teacher = teachers.find((item) => item.profile_id === profile.id);
+      if (!teacher) {
+        setTrainerEstimate({ loading: false, mode: '', hours: 0, count: 0, amount: 0, complete: false, message: 'Votre compte n’est pas encore lié à une fiche formateur.', rateSummary: [] });
+        return;
+      }
+      const periodStart = monthStart();
+      const periodEnd = monthEnd();
+      const effectiveAtStart = teacherRates
+        .filter((item) => Number(item.teacher_id) === Number(teacher.id) && item.effective_from <= periodStart)
+        .sort((a, b) => b.effective_from.localeCompare(a.effective_from))[0];
+      if (effectiveAtStart?.compensation_mode === 'monthly') {
+        setTrainerEstimate({ loading: false, mode: 'Salaire mensuel fixe', hours: 0, count: 0, amount: numeric(effectiveAtStart.monthly_salary), complete: numeric(effectiveAtStart.monthly_salary) > 0, message: 'Salaire fixe applicable au premier jour du mois.', rateSummary: [periodStart + ' : ' + money(numeric(effectiveAtStart.monthly_salary)) + '/mois'] });
+        return;
+      }
+      setTrainerEstimate({ loading: true, mode: effectiveAtStart?.compensation_mode ?? 'Tarif à confirmer', hours: 0, count: 0, amount: 0, complete: false, message: '', rateSummary: [] });
+      try {
+        const client = getSupabaseClient();
+        const courseResult = await client.from('cours').select('id,debut,fin').eq('centre_id', profile.centreId).eq('formateur_id', teacher.id);
+        if (courseResult.error) throw courseResult.error;
+        const courseRows = (courseResult.data ?? []) as CourseTime[];
+        if (!courseRows.length) {
+          if (active) setTrainerEstimate({ loading: false, mode: effectiveAtStart?.compensation_mode ?? 'Tarif à confirmer', hours: 0, count: 0, amount: 0, complete: !!effectiveAtStart, message: effectiveAtStart ? 'Aucune séance validée ce mois-ci.' : 'Aucun tarif en vigueur au début du mois.', rateSummary: [] });
+          return;
+        }
+        const courseIds = courseRows.map((course) => course.id);
+        const [sessionResult, cancellationResult] = await Promise.all([
+          client.from('seances_realisees').select('cours_id,date,validation_status').eq('centre_id', profile.centreId).eq('validation_status', 'approved').gte('date', periodStart).lte('date', periodEnd).in('cours_id', courseIds),
+          client.from('annulations').select('cours_id,date').eq('centre_id', profile.centreId).gte('date', periodStart).lte('date', periodEnd).in('cours_id', courseIds),
+        ]);
+        if (sessionResult.error) throw sessionResult.error;
+        if (cancellationResult.error) throw cancellationResult.error;
+        const approved = (sessionResult.data ?? []) as PlannedSession[];
+        const cancelled = new Set((cancellationResult.data ?? []).map((row) => String(row.cours_id) + '|' + row.date));
+        const byId = new Map(courseRows.map((course) => [String(course.id), course]));
+        let count = 0, hours = 0, amount = 0, missingRateCount = 0, modeMismatchCount = 0;
+        const rateSummary = new Set<string>();
+        const modes = new Set<string>();
+        for (const session of approved) {
+          if (cancelled.has(String(session.cours_id) + '|' + session.date)) continue;
+          const course = byId.get(String(session.cours_id));
+          if (!course) continue;
+          const duration = durationHours(course.debut, course.fin);
+          if (duration <= 0) continue;
+          count += 1; hours += duration;
+          const rate = teacherRates
+            .filter((item) => Number(item.teacher_id) === Number(teacher.id) && item.effective_from <= session.date)
+            .sort((a, b) => b.effective_from.localeCompare(a.effective_from))[0];
+          if (!rate) { missingRateCount += 1; continue; }
+          modes.add(rate.compensation_mode);
+          if (rate.compensation_mode === 'hourly') {
+            amount += duration * numeric(rate.hourly_rate);
+            rateSummary.add(rate.effective_from + ' : ' + money(numeric(rate.hourly_rate)) + '/h');
+          } else if (rate.compensation_mode === 'session') {
+            amount += numeric(rate.session_rate);
+            rateSummary.add(rate.effective_from + ' : ' + money(numeric(rate.session_rate)) + '/séance');
+          } else {
+            modeMismatchCount += 1;
+          }
+        }
+        const mixedModes = modes.size > 1 || (effectiveAtStart && modes.size > 0 && !modes.has(effectiveAtStart.compensation_mode));
+        if (mixedModes) modeMismatchCount += 1;
+        const complete = missingRateCount === 0 && modeMismatchCount === 0 && !!effectiveAtStart;
+        const message = missingRateCount ? 'Tarif manquant pour ' + missingRateCount + ' séance(s).' : modeMismatchCount ? 'Le mode de rémunération a changé pendant le mois ; demandez au directeur de vérifier le calcul.' : !effectiveAtStart ? 'Aucun tarif en vigueur au premier jour du mois.' : count ? 'Calcul basé uniquement sur les séances validées par le directeur.' : 'Aucune séance validée ce mois-ci.';
+        if (active) setTrainerEstimate({ loading: false, mode: effectiveAtStart?.compensation_mode ?? [...modes].join(' / ') || 'Tarif à confirmer', hours: Math.round(hours * 100) / 100, count, amount: Math.round(amount * 100) / 100, complete, message, rateSummary: [...rateSummary].sort() });
+      } catch (cause) {
+        if (active) setTrainerEstimate({ loading: false, mode: '', hours: 0, count: 0, amount: 0, complete: false, message: readableFinanceError(cause, 'Impossible de calculer votre estimation.'), rateSummary: [] });
+      }
+    }
+    void loadTrainerEstimate();
+    return () => { active = false; };
+  }, [profile?.role, profile?.centreId, profile?.id, teachers, teacherRates, reloadKey]);
 
   const studentName = (id: number) => { const student = students.find((item) => Number(item.id) === Number(id)); return student ? (student.prenom + ' ' + student.nom).trim() : 'Étudiant #' + id; };
   const teacherName = (id: number) => { const teacher = teachers.find((item) => Number(item.id) === Number(id)); return teacher ? teacher.nom : 'Formateur #' + id; };
@@ -496,6 +576,7 @@ export function FinanceDashboardPage() {
     {view === 'expenses' && <FinanceOperations onChange={reload} readOnly={!isDirector} />}
     {view === 'receipts' && <section className="finance-content-panel"><div className="finance-content-heading"><div><h2>Reçus et justificatifs</h2><p>Retrouvez chaque encaissement et imprimez un reçu à remettre à l’étudiant.</p></div></div><div className="finance-table-wrap"><table className="finance-table"><thead><tr><th>N° reçu</th><th>Étudiant</th><th>Frais</th><th>Montant</th><th>Mode</th><th>Date</th><th>Justificatif</th></tr></thead><tbody>{payments.map((payment) => { const charge = charges.find((item) => item.id === payment.charge_id); return <tr key={payment.id}><td><strong>{payment.receipt_number}</strong></td><td>{charge ? studentName(charge.student_id) : '—'}</td><td>{charge?.label ?? 'Frais archivés'}</td><td>{money(numeric(payment.amount))}</td><td>{METHODS.find((method) => method.value === payment.payment_method)?.label ?? payment.payment_method}</td><td>{new Date(payment.paid_at).toLocaleString('fr-MA')}</td><td><Button type="button" variant="secondary" onClick={() => { const receipt = '<!doctype html><html lang="fr"><head><meta charset="utf-8"><title>Reçu ' + payment.receipt_number + '</title><style>body{font:16px Arial;margin:40px;color:#172033}header{border-bottom:2px solid #173b6c;padding-bottom:18px;margin-bottom:24px}h1{color:#173b6c}table{width:100%;border-collapse:collapse;margin-top:24px}td{padding:12px;border-bottom:1px solid #ddd}.amount{font-size:24px;font-weight:bold}footer{margin-top:60px;color:#667}</style></head><body><header><h1>REÇU DE PAIEMENT</h1><p>SchoolPlans · Centre de formation</p></header><p><strong>Numéro :</strong> ' + payment.receipt_number + '</p><p><strong>Date :</strong> ' + new Date(payment.paid_at).toLocaleString('fr-MA') + '</p><p><strong>Étudiant :</strong> ' + (charge ? studentName(charge.student_id) : '—') + '</p><p><strong>Objet :</strong> ' + (charge?.label ?? 'Frais de formation') + '</p><p><strong>Mode de paiement :</strong> ' + (METHODS.find((method) => method.value === payment.payment_method)?.label ?? payment.payment_method) + '</p><p class="amount">Montant reçu : ' + money(numeric(payment.amount)) + '</p>' + (payment.reference ? '<p>Référence : ' + payment.reference + '</p>' : '') + '<footer>Document généré depuis le tableau de bord financier.</footer><script>window.onload=()=>window.print()</script></body></html>'; const blob = new Blob([receipt], { type: 'text/html;charset=utf-8' }); const url = URL.createObjectURL(blob); const win = window.open(url, '_blank'); if (!win) { URL.revokeObjectURL(url); setError('Autorisez les fenêtres popup pour imprimer le reçu.'); } }}>Imprimer le reçu</Button></td></tr>; })}{payments.length === 0 && <tr><td colSpan={7}>Aucun reçu disponible.</td></tr>}</tbody></table></div><p className="finance-security-note">Les paiements restent dans l’historique pour préserver la traçabilité comptable.</p></section>}
 
+    {view === 'payroll' && profile?.role === 'formateur' && <div className="finance-quick-metrics"><article><span>Estimation provisoire — {monthStart().slice(0,7)}</span><strong>{trainerEstimate.loading ? 'Calcul…' : money(trainerEstimate.amount)}</strong><small>{trainerEstimate.message || (trainerEstimate.complete ? 'Basée sur les séances validées.' : 'Estimation à confirmer.')}</small><small>{trainerEstimate.count} séance(s) validée(s) · {trainerEstimate.hours.toFixed(2)} h</small>{trainerEstimate.rateSummary.map(line => <small key={line}>{line}</small>)}</article></div>}
     {view === 'payroll' && <section className="finance-content-panel"><div className="finance-content-heading"><div><h2>Paiement des formateurs</h2><p>Choisissez un mode de calcul par formateur et suivez les avances déjà versées.</p></div><div className="finance-toolbar">{isDirector && <><Button type="button" variant="secondary" onClick={() => { setRateForm({ teacherId: '', compensationMode: 'hourly', hourlyRate: '', sessionRate: '', monthlySalary: '', effectiveFrom: today(), notes: '' }); setError(null); setModal('rate'); }}>+ Ajouter un tarif</Button><Button type="button" variant="secondary" onClick={() => { setAdjustmentForm({ teacherId: '', type: 'late_session', amount: '', sourceSessionId: '', reason: '' }); setError(null); setModal('adjustment'); }}>+ Ajouter un ajustement</Button><Button type="button" variant="secondary" onClick={() => { setAdvanceForm({ teacherId: '', amount: '', advanceDate: today(), notes: '' }); setError(null); setModal('advance'); }}>+ Enregistrer une avance</Button><Button type="button" onClick={() => openPayroll()}>+ Préparer une rémunération</Button></>}</div></div><div className="finance-table-wrap"><table className="finance-table"><thead><tr><th>Formateur</th><th>Mode</th><th>Période</th><th>Brut</th><th>Avance déduite</th><th>Net à payer</th><th>Statut</th><th>Mode de paiement</th><th>Date de paiement</th><th>Référence</th><th>Actions</th></tr></thead><tbody>{payroll.map((item) => <tr key={item.id}><td>{teacherName(item.teacher_id)}</td><td>{item.compensation_mode === 'session' ? 'À la séance' : item.compensation_mode === 'monthly' ? 'Mensuel' : 'À l’heure'}</td><td>{item.period_start} → {item.period_end}</td><td>{money(numeric(item.gross_amount ?? item.amount_due))}</td><td>{money(numeric(item.advance_deduction))}</td><td>{money(numeric(item.amount_due))}</td><td><span className={'finance-status finance-status-' + item.status}>{item.status === 'draft' ? 'Brouillon' : item.status === 'approved' ? (item.payment_reversed_at ? 'Paiement annulé — à repayer' : 'Validée') : item.status === 'paid' ? 'Payée' : 'Annulée'}</span></td><td>{item.payment_method ? (METHODS.find(method => method.value === item.payment_method)?.label ?? item.payment_method) : '—'}</td><td>{item.paid_at ? new Date(item.paid_at).toLocaleDateString('fr-MA') : '—'}</td><td>{item.payment_reference || '—'}</td><td><div className="finance-row-actions">{isDirector && item.status === 'draft' && <><Button type="button" variant="secondary" disabled={saving} onClick={() => openPayroll(item)}>Modifier</Button><Button type="button" variant="secondary" disabled={saving} onClick={() => void changePayrollStatus(item, 'cancelled')}>Annuler</Button><Button type="button" disabled={saving} onClick={() => void changePayrollStatus(item, 'approved')}>Valider</Button></>}{isDirector && item.status === 'approved' && <Button type="button" disabled={saving} onClick={() => openPayrollPayment(item)}>Enregistrer le paiement</Button>}{isDirector && item.status === 'paid' && <Button type="button" variant="danger" disabled={saving} onClick={() => void cancelPayrollPayment(item)}>Annuler le paiement</Button>}{item.payment_reversed_at && <small>Annulé le {new Date(item.payment_reversed_at).toLocaleDateString('fr-MA')} : {item.payment_reversal_reason}</small>}</div></td></tr>)}{payroll.length === 0 && <tr><td colSpan={11}>Aucune rémunération préparée.</td></tr>}</tbody></table></div>{profile?.role !== 'formateur' && <div className="finance-table-wrap"><h3>Avances versées</h3><table className="finance-table"><thead><tr><th>Formateur</th><th>Date</th><th>Montant</th><th>Solde total d’avance du formateur</th><th>Notes</th></tr></thead><tbody>{advances.filter((item) => item.status === 'active').map((item) => <tr key={item.id}><td>{teacherName(item.teacher_id)}</td><td>{item.advance_date}</td><td>{money(numeric(item.amount))}</td><td>{money(advanceBalance(item.teacher_id))}</td><td>{item.notes || '—'}</td></tr>)}{advances.filter((item) => item.status === 'active').length === 0 && <tr><td colSpan={5}>Aucune avance enregistrée.</td></tr>}</tbody></table></div>}<div className="finance-table-wrap"><h3>Historique des tarifs</h3><table className="finance-table"><thead><tr><th>Formateur</th><th>Mode</th><th>Tarif horaire</th><th>Tarif séance</th><th>Salaire mensuel</th><th>Date d’effet</th></tr></thead><tbody>{teacherRates.map(rate => <tr key={rate.id}><td>{teacherName(rate.teacher_id)}</td><td>{rate.compensation_mode === 'session' ? 'À la séance' : rate.compensation_mode === 'monthly' ? 'Mensuel' : 'À l’heure'}</td><td>{rate.compensation_mode === 'hourly' ? money(numeric(rate.hourly_rate)) : '—'}</td><td>{rate.compensation_mode === 'session' ? money(numeric(rate.session_rate)) : '—'}</td><td>{rate.compensation_mode === 'monthly' ? money(numeric(rate.monthly_salary)) : '—'}</td><td>{rate.effective_from}</td></tr>)}{teacherRates.length === 0 && <tr><td colSpan={6}>Aucun tarif enregistré.</td></tr>}</tbody></table></div>{profile?.role !== 'formateur' && <div className="finance-table-wrap"><h3>Ajustements exceptionnels et séances tardives</h3><table className="finance-table"><thead><tr><th>Formateur</th><th>Type</th><th>Référence séance</th><th>Montant</th><th>Motif</th><th>Statut</th><th>Paiement</th><th>Actions</th></tr></thead><tbody>{adjustments.map(item => <tr key={item.id}><td>{teacherName(item.teacher_id)}</td><td>{item.adjustment_type === 'late_session' ? 'Séance validée tardivement' : item.adjustment_type === 'exceptional_payment' ? 'Paiement exceptionnel' : item.adjustment_type === 'correction' ? 'Correction' : 'Annulation / contrepassation'}</td><td>{item.source_session_id || '—'}</td><td>{money(numeric(item.amount))}</td><td>{item.reason}</td><td>{item.status === 'pending' ? 'À valider' : item.status === 'approved' ? 'À payer' : item.status === 'paid' ? 'Payé' : 'Annulé'}</td><td>{item.paid_at ? (METHODS.find(method => method.value === item.payment_method)?.label ?? item.payment_method ?? '—') + ' · ' + new Date(item.paid_at).toLocaleDateString('fr-MA') : '—'}</td><td>{isDirector && item.status === 'pending' && <Button type="button" disabled={saving} onClick={() => void approvePayrollAdjustment(item)}>Valider</Button>}{isDirector && item.status === 'approved' && <Button type="button" disabled={saving} onClick={() => openAdjustmentPayment(item)}>Payer</Button>}</td></tr>)}{adjustments.length === 0 && <tr><td colSpan={8}>Aucun ajustement enregistré.</td></tr>}</tbody></table></div>}<p className="finance-security-note">Les tarifs sont historisés ; vérifiez les changements de tarif à l’intérieur d’une même période mensuelle. {isDirector ? 'Seul le directeur peut modifier et valider.' : 'Mode consultation : aucune modification de rémunération n’est disponible.'}</p></section>}
 
     {modal === 'charge' && <Popup title={editingChargeId ? 'Modifier les frais' : 'Ajouter des frais'} onClose={() => setModal(null)}><form className="finance-modal-form" onSubmit={(event) => void saveCharge(event)}>
