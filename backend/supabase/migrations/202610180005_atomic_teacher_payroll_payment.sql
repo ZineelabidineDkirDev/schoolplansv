@@ -49,6 +49,8 @@ for select to authenticated using (
   )
 );
 
+grant insert on public.finance_audit_log to authenticated;
+
 create policy finance_audit_log_director_insert on public.finance_audit_log
 for insert to authenticated with check (
   exists (
