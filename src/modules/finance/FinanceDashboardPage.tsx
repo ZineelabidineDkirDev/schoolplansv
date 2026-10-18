@@ -9,7 +9,7 @@ type Teacher = { id: number; nom: string; profile_id?: string | null };
 type TeacherAdvance = { id: string; teacher_id: number; amount: number | string; advance_date: string; notes: string | null; status: string };
 type AdvanceRepayment = { teacher_id: number; payroll_id: string; amount: number | string; status: string };
 type FinanceAccount = { id: string; name: string; account_type: 'cash' | 'bank'; active: boolean };
-type PlannedSession = { cours_id: number | string; date: string; validation_status: string };
+type PlannedSession = { cours_id: number | string; date: string; validation_status: string; planned_minutes?: number | string | null };
 type CourseTime = { id: number | string; debut: string; fin: string };
 type Charge = { id: string; student_id: number; label: string; amount_due: number | string; due_date: string | null; status: string; notes: string | null };
 type Payment = { id: string; charge_id: string; amount: number | string; payment_method: string; receipt_number: string; paid_at: string; reference?: string | null; notes?: string | null };
@@ -154,7 +154,7 @@ export function FinanceDashboardPage() {
         }
         const courseIds = courseRows.map((course) => course.id);
         const [sessionResult, cancellationResult] = await Promise.all([
-          client.from('seances_realisees').select('cours_id,date,validation_status').eq('centre_id', profile.centreId).eq('validation_status', 'approved').gte('date', payrollForm.periodStart).lte('date', payrollForm.periodEnd).in('cours_id', courseIds),
+          client.from('seances_realisees').select('cours_id,date,validation_status,planned_minutes').eq('centre_id', profile.centreId).eq('validation_status', 'approved').gte('date', payrollForm.periodStart).lte('date', payrollForm.periodEnd).in('cours_id', courseIds),
           client.from('annulations').select('cours_id,date').eq('centre_id', profile.centreId).gte('date', payrollForm.periodStart).lte('date', payrollForm.periodEnd).in('cours_id', courseIds),
         ]);
         if (sessionResult.error) throw sessionResult.error;
@@ -168,7 +168,7 @@ export function FinanceDashboardPage() {
           if (cancelled.has(String(session.cours_id) + '|' + session.date)) continue;
           const course = byId.get(String(session.cours_id));
           if (!course) continue;
-          const sessionHours = durationHours(course.debut, course.fin);
+          const sessionHours = session.planned_minutes !== null && session.planned_minutes !== undefined ? numeric(session.planned_minutes) / 60 : durationHours(course.debut, course.fin);
           if (sessionHours <= 0) continue;
           count += 1;
           hours += sessionHours;
@@ -245,7 +245,7 @@ export function FinanceDashboardPage() {
           if (cancelled.has(String(session.cours_id) + '|' + session.date)) continue;
           const course = byId.get(String(session.cours_id));
           if (!course) continue;
-          const duration = durationHours(course.debut, course.fin);
+          const duration = session.planned_minutes !== null && session.planned_minutes !== undefined ? numeric(session.planned_minutes) / 60 : durationHours(course.debut, course.fin);
           if (duration <= 0) continue;
           count += 1; hours += duration;
           if (effectiveAtStart?.compensation_mode === 'monthly') continue;
