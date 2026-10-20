@@ -81,8 +81,8 @@ begin
     end if;
   end if;
 
-  -- A teacher's payroll periods must never overlap. Locking the teacher row above
-  -- serializes concurrent saves for this teacher, making this check race-safe.
+  -- Reject any date overlap with another active payroll for the same teacher.
+  -- The teacher row lock above serializes concurrent save attempts.
   if exists (
     select 1
     from public.finance_teacher_payroll pr
@@ -186,5 +186,81 @@ begin
 end;
 $$;
 
+
+create or replace function public.finance_change_teacher_payroll_status(
+  p_payroll_id uuid,
+  p_status text
+)
+returns void
+language plpgsql
+security invoker
+set search_path = public, pg_temp
+as $$
+declare
+  v_centre_id uuid;
+  v_role text;
+  v_current_status text;
+  v_teacher_id bigint;
+  v_period_start date;
+  v_period_end date;
+begin
+  select p.centre_id, p.role
+    into v_centre_id, v_role
+  from public.profiles p
+  where p.id = auth.uid();
+
+  if auth.uid() is null or coalesce(v_role, '') not in ('admin', 'director') or v_centre_id is null then
+    raise exception 'Accès refusé : directeur ou administrateur du centre requis.';
+  end if;
+  if p_status is null or p_status not in ('approved', 'cancelled') then
+    raise exception 'Transition de statut invalide.';
+  end if;
+
+  select pr.status, pr.teacher_id, pr.period_start, pr.period_end
+    into v_current_status, v_teacher_id, v_period_start, v_period_end
+  from public.finance_teacher_payroll pr
+  where pr.id = p_payroll_id and pr.centre_id = v_centre_id
+  for update;
+
+  if not found then
+    raise exception 'Rémunération introuvable pour ce centre.';
+  end if;
+  if v_current_status <> 'draft' then
+    raise exception 'Seule une rémunération en brouillon peut être validée ou annulée.';
+  end if;
+
+  if p_status = 'approved' and exists (
+    select 1
+    from public.finance_teacher_payroll pr
+    where pr.centre_id = v_centre_id
+      and pr.teacher_id = v_teacher_id
+      and pr.id <> p_payroll_id
+      and pr.status <> 'cancelled'
+      and pr.period_start <= v_period_end
+      and v_period_start <= pr.period_end
+  ) then
+    raise exception
+      'Validation impossible : cette période chevauche une autre rémunération non annulée pour ce formateur.';
+  end if;
+
+  update public.finance_teacher_payroll
+  set status = p_status,
+      approved_by = case when p_status = 'approved' then auth.uid() else null end
+  where id = p_payroll_id and centre_id = v_centre_id and status = 'draft';
+
+  if not found then
+    raise exception 'La rémunération a changé entre-temps. Rechargez la page puis réessayez.';
+  end if;
+
+  if p_status = 'cancelled' then
+    update public.finance_teacher_advance_repayments
+    set status = 'cancelled'
+    where centre_id = v_centre_id and payroll_id = p_payroll_id and status = 'active';
+  end if;
+end;
+$$;
+
 revoke all on function public.finance_save_teacher_payroll(uuid, bigint, date, date, text, numeric, numeric, numeric, numeric, numeric, numeric, text) from public;
+revoke all on function public.finance_change_teacher_payroll_status(uuid, text) from public;
 grant execute on function public.finance_save_teacher_payroll(uuid, bigint, date, date, text, numeric, numeric, numeric, numeric, numeric, numeric, text) to authenticated;
+grant execute on function public.finance_change_teacher_payroll_status(uuid, text) to authenticated;
