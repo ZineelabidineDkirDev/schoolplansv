@@ -196,6 +196,21 @@ export function FinanceDashboardPage() {
     const deduction = Number(payrollForm.advanceDeduction || 0);
     const gross = payrollForm.compensationMode === 'session' ? sessionCount * sessionRate : payrollForm.compensationMode === 'monthly' ? monthlySalary : hours * hourlyRate;
     if (!payrollForm.teacherId || !payrollForm.periodStart || !payrollForm.periodEnd || payrollForm.periodEnd < payrollForm.periodStart || ![hours,hourlyRate,sessionCount,sessionRate,monthlySalary,deduction,gross].every(Number.isFinite) || [hours,hourlyRate,sessionCount,sessionRate,monthlySalary,deduction].some((value) => value < 0) || deduction > gross) { setError('Vérifiez le formateur, la période et les montants. La déduction ne peut pas dépasser la rémunération brute. Le solde réel des avances sera vérifié par la base de données.'); return; }
+    const overlappingPayroll = payroll.find((item) =>
+      item.id !== editingPayrollId &&
+      Number(item.teacher_id) === Number(payrollForm.teacherId) &&
+      item.status !== 'cancelled' &&
+      item.period_start <= payrollForm.periodEnd &&
+      payrollForm.periodStart <= item.period_end
+    );
+    if (overlappingPayroll) {
+      setError(
+        'Cette période chevauche une rémunération existante (' +
+        overlappingPayroll.period_start + ' → ' + overlappingPayroll.period_end +
+        '). Pour éviter de compter deux fois les mêmes heures, choisissez une période sans chevauchement ou modifiez le brouillon existant.'
+      );
+      return;
+    }
     setSaving(true); setError(null); setNotice(null);
     try {
       const client = getSupabaseClient();
